@@ -1,0 +1,37 @@
+# Private infrastructure and secrets
+INFRA.md
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Runtime and private imported content
+data/
+backups/
+imports/
+*.sqlite
+*.sqlite3
+*.db
+# SQLite sidecars (not covered by the extensions above)
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-journal
+*.db-wal
+*.db-shm
+# Local history bundles and private backup notes — never publish
+*.bundle
+PRIVATE-BACKUP.md
+private-backups/
+# Dependencies/builds/test output
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.venv/
+__pycache__/
+.DS_Store

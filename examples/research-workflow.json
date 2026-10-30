@@ -1,0 +1,72 @@
+{
+  "title": "Example: research to published draft",
+  "nodes": [
+    {
+      "id": "request", "type": "task", "title": "Topic request",
+      "description": "Someone asks for a short write-up on a topic.",
+      "position": { "x": 0, "y": 140 }, "owner": "human", "readiness": "configured",
+      "proposal": { "agentOwns": [], "youOwn": ["Pick the topic", "Say who it is for"] },
+      "setup": []
+    },
+    {
+      "id": "research", "type": "agent", "title": "Research agent",
+      "description": "Collects sources and notes on the topic.",
+      "position": { "x": 340, "y": 40 }, "owner": "agent", "readiness": "not_configured",
+      "proposal": { "agentOwns": ["Find and summarise sources", "Flag weak or conflicting sources"], "youOwn": ["Approve the source list"] },
+      "setup": [
+        { "id": "r1", "text": "Choose a search tool", "detail": "", "link": "", "done": true },
+        { "id": "r2", "text": "Set a source limit", "detail": "Keeps research bounded.", "link": "", "done": false }
+      ]
+    },
+    {
+      "id": "draft", "type": "agent", "title": "Draft agent",
+      "description": "Writes the draft from the research notes only.",
+      "position": { "x": 680, "y": 40 }, "owner": "agent", "readiness": "configured",
+      "proposal": { "agentOwns": ["Write the draft from the research only"], "youOwn": ["Set tone, length and audience"] },
+      "setup": [
+        { "id": "d1", "text": "Pick the draft model", "detail": "", "link": "", "done": true },
+        { "id": "d2", "text": "Write the style guide", "detail": "", "link": "", "done": true }
+      ]
+    },
+    {
+      "id": "review", "type": "agent", "title": "Independent review",
+      "description": "A different model checks the draft against the sources.",
+      "position": { "x": 1020, "y": 40 }, "owner": "agent", "readiness": "proposed",
+      "proposal": { "agentOwns": ["Check claims against sources", "List required fixes"], "youOwn": [] },
+      "setup": [
+        { "id": "v1", "text": "Pick a review model", "detail": "Use a different model from the draft agent so the review is independent.", "link": "", "done": false }
+      ]
+    },
+    {
+      "id": "approval", "type": "approval", "title": "Human approval",
+      "description": "Nothing is published without a person signing off.",
+      "position": { "x": 1020, "y": 330 }, "owner": "human", "readiness": "not_configured",
+      "proposal": { "agentOwns": ["Prepare a summary of changes"], "youOwn": ["Approve, reject or send back"] },
+      "setup": [
+        { "id": "a1", "text": "Decide who can approve", "detail": "", "link": "", "done": false }
+      ]
+    },
+    {
+      "id": "publish", "type": "artifact", "title": "Published draft",
+      "description": "Saved locally once approved.",
+      "position": { "x": 1360, "y": 330 }, "owner": "unassigned", "readiness": "proposed",
+      "proposal": { "agentOwns": ["Save the approved version"], "youOwn": [] },
+      "setup": []
+    },
+    {
+      "id": "note", "type": "note", "title": "Why two models?",
+      "description": "The reviewer is deliberately a different model, so it does not share the drafter's blind spots.",
+      "position": { "x": 680, "y": 330 }, "owner": "unassigned", "readiness": "proposed",
+      "proposal": { "agentOwns": [], "youOwn": [] },
+      "setup": []
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "request", "target": "research", "type": "requires", "label": "" },
+    { "id": "e2", "source": "research", "target": "draft", "type": "data", "label": "notes" },
+    { "id": "e3", "source": "draft", "target": "review", "type": "requires", "label": "" },
+    { "id": "e4", "source": "review", "target": "draft", "type": "revision", "label": "fixes needed" },
+    { "id": "e5", "source": "review", "target": "approval", "type": "requires", "label": "" },
+    { "id": "e6", "source": "approval", "target": "publish", "type": "conditional", "label": "approved" }
+  ]
+}
