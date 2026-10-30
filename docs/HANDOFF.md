@@ -15,7 +15,9 @@ What exists:
 
 - Details panel (`web/src/DetailsPanel.tsx`), described below.
 
-What does not exist in the committed tree: undo, a workflow list or projects sidebar, delete, JSON import/export routes, Docker Compose, an access token, skill import, execution, and an automated browser suite.
+- Workflow sidebar with projects, ordering, move, rename, duplicate and delete, described below.
+
+What does not exist in the committed tree: undo, JSON import/export routes, Docker Compose, an access token, skill import, execution, and an automated browser suite.
 
 Public source: https://github.com/mrdeeds89/workflow-canvas under the MIT license. Publishing this repository does not deploy the service. The application stays loopback-only. History from before this public snapshot stays only in a private backup. It is not an ancestor of these commits and must not be pushed.
 
@@ -71,6 +73,14 @@ Browser-verified against stored state: panel opens; rename persists; Backspace i
 
 Not yet verified: the bad-link warning, the arrow panel (kind, label, loop refusal), and delete from the panel. The agent's browser tool proved unreliable for this (calls alternated between two browsers), so Dom is testing hands-on; an automated browser suite on the VM would make agent verification independent of that tool.
 
+## Sidebar
+
+Server: `src/graph/library.ts` (types shared with the browser, no Node imports) and new store methods in `store.ts`. A `projects` table plus `project_id`, `position`, `updated_at` columns on `workflows`, added in place by `upgradeWorkflowsTable`; existing workflows become Unfiled in creation order. Organisation lives beside the document, so moving or reordering never changes a revision. Routes: `GET /api/library`, `POST /api/projects`, `PATCH /api/projects/:id` (rename), `POST /api/workflows` accepts `projectId`, `POST /api/workflows/:id/move {projectId|null, index}` (returns the library), `POST /api/workflows/:id/duplicate`, `DELETE /api/workflows/:id`. New workflows and copies go to the top of their list / right after the original. Project titles are trimmed, 1–200 characters. No project delete or duplicate (not requested).
+
+Browser: `web/src/Shell.tsx` (library state, address bar `?w=` with Back support, actions) and `web/src/Sidebar.tsx`. Sidebar folds away to a thin rail (remembered in localStorage). "+ New workflow" at the top; projects with a hover "+" (new workflow in that project) and rename (pencil or double-click); Unfiled last. Row ⋯ menu: Rename, Duplicate, Move to…, Delete… (browser confirm). Rows drag to reorder within a list or onto another list. The open editor is keyed by workflow id; switching saves pending edits first; renaming or duplicating the open workflow goes through the editor (`EditorHandle.rename` / `settle`) so its revision stays in step and the copy includes unsaved edits. A bare visit opens the first workflow, or creates one if there are none.
+
+Verified: typecheck clean, 70 tests pass (new `test/library.test.ts` covers ordering, move between lists, delete gap-closing, duplicate independence, upgrading a pre-projects database, and the HTTP routes including bad input), build succeeds, smoke passes. The preview database was backed up (gitignored `backups/`) and then upgraded: its 6 existing workflows appear as Unfiled. **The sidebar UI has not been exercised in a browser by the agent**; Dom is testing it hands-on.
+
 ## Decisions still in force
 
 - Access, when it leaves loopback: a browser on a private network, protected by a simple access token, with a scoped allow-list of origins. Not built. Not a public service.
@@ -115,4 +125,4 @@ GitHub Actions run https://github.com/mrdeeds89/workflow-canvas/actions/runs/410
 
 ## Next action
 
-Collect Dom's hands-on feedback on the details panel and finish its unverified checks. Then build the sidebar described above. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.
+Collect Dom's hands-on feedback on the details panel and the sidebar. Then trigger design (saved, not run), then the access token and Compose hosting. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.

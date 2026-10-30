@@ -16,7 +16,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import {
   deriveReadiness,
   readinessSummary,
@@ -27,7 +27,7 @@ import {
   type WorkflowNode,
 } from "../../src/graph/types.ts";
 import { validateWorkflow } from "../../src/graph/validate.ts";
-import { ApiError, createWorkflow, loadWorkflow, saveWorkflow } from "./api.ts";
+import { ApiError, loadWorkflow, saveWorkflow } from "./api.ts";
 import { CardNode, type CardFlowNode } from "./CardNode.tsx";
 import { CARD_KINDS, makeId, newCard } from "./cards.ts";
 import { CardDetails, EdgeDetails } from "./DetailsPanel.tsx";
@@ -122,15 +122,30 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
-export function App() {
+/** What the shell can ask of the open editor. */
+export type EditorHandle = {
+  /** Resolve once every edit made so far is saved (or saving has stopped). */
+  settle(): Promise<void>;
+  /** Rename the open workflow through the editor, so its revision stays in step. */
+  rename(title: string): void;
+};
+
+type EditorProps = {
+  workflowId: string;
+  onTitleChange: (id: string, title: string) => void;
+  ref?: Ref<EditorHandle>;
+};
+
+/** One workflow's canvas. Keyed by workflow id, so switching starts fresh. */
+export function WorkflowEditor(props: EditorProps) {
   return (
     <ReactFlowProvider>
-      <Editor />
+      <Editor {...props} />
     </ReactFlowProvider>
   );
 }
 
-function Editor() {
+function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [nodes, setNodes] = useState<CardFlowNode[]>([]);
   const [edges, setEdges] = useState<FlowEdge[]>([]);
@@ -146,33 +161,30 @@ function Editor() {
   const saving = useRef(false);
   const pending = useRef(false);
   const blocked = useRef(false);
-  const started = useRef(false);
+  const dirty = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
+    let cancelled = false;
     void (async () => {
       try {
-        let id = new URLSearchParams(window.location.search).get("w");
-        if (!id) {
-          // No list screen yet: a fresh visit starts a workflow, and its
-          // address (with ?w=) is what you bookmark to come back to it.
-          id = (await createWorkflow("Untitled workflow")).id;
-          window.history.replaceState(null, "", `?w=${encodeURIComponent(id)}`);
-        }
-        const { nodes: loadedNodes, edges: loadedEdges, ...rest } = await loadWorkflow(id);
+        const { nodes: loadedNodes, edges: loadedEdges, ...rest } = await loadWorkflow(workflowId);
+        if (cancelled) return;
         setMeta(rest);
         setNodes(loadedNodes.map(toFlowNode));
         setEdges(loadedEdges.map(toFlowEdge));
       } catch (error) {
+        if (cancelled) return;
         setLoadError(
           error instanceof ApiError && error.status === 404
-            ? "This workflow does not exist."
+            ? "This workflow does not exist. It may have been deleted."
             : `Could not load the workflow: ${messageOf(error)}`,
         );
       }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [workflowId]);
 
   useEffect(() => {
     if (meta) document.title = `${meta.title.trim() || "Untitled workflow"} · Workflow Canvas`;
@@ -186,6 +198,7 @@ function Editor() {
 
   const markDirty = useCallback(() => {
     if (blocked.current) return;
+    dirty.current = true;
     setSave({ kind: "dirty" });
     setChangeCount((count) => count + 1);
   }, []);
@@ -200,6 +213,7 @@ function Editor() {
     if (!currentMeta) return;
 
     saving.current = true;
+    dirty.current = false;
     setSave({ kind: "saving" });
     try {
       const saved = await saveWorkflow(buildDefinition(currentMeta, currentNodes, currentEdges));
@@ -219,6 +233,8 @@ function Editor() {
       );
       setSave(pending.current ? { kind: "dirty" } : { kind: "saved" });
     } catch (error) {
+      // Unsaved again: a later flush (or leaving the workflow) will retry.
+      if (!(error instanceof ApiError && error.status === 409)) dirty.current = true;
       if (error instanceof ApiError && error.status === 409) {
         blocked.current = true;
         setSave({ kind: "conflict" });
@@ -241,6 +257,31 @@ function Editor() {
     const timer = setTimeout(() => void flush(), AUTOSAVE_MS);
     return () => clearTimeout(timer);
   }, [changeCount, flush]);
+
+  // Leaving this workflow (switching in the sidebar) saves what is pending.
+  useEffect(
+    () => () => {
+      if (dirty.current && !blocked.current) void flush();
+    },
+    [flush],
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      async settle() {
+        if (dirty.current && !blocked.current) await flush();
+        while ((saving.current || pending.current) && !blocked.current) {
+          await new Promise((wait) => setTimeout(wait, 50));
+        }
+      },
+      rename(title: string) {
+        setMeta((previous) => (previous ? { ...previous, title } : previous));
+        markDirty();
+      },
+    }),
+    [flush, markDirty],
+  );
 
   // Warn before closing the tab while edits are still on their way.
   useEffect(() => {
@@ -356,15 +397,16 @@ function Editor() {
 
   const renameWorkflow = (title: string) => {
     setMeta((previous) => (previous ? { ...previous, title } : previous));
+    onTitleChange(workflowId, title);
     markDirty();
   };
 
   if (loadError) {
     return (
       <div className="screen-message">
-        <h1>Workflow Canvas</h1>
+        <h1>Can't open this workflow</h1>
         <p>{loadError}</p>
-        <a href="/">Start a new workflow</a>
+        <p>Pick another from the sidebar, or start a new one.</p>
       </div>
     );
   }
@@ -381,10 +423,6 @@ function Editor() {
   return (
     <div className="app">
       <header className="toolbar">
-        <span className="brand">Workflow Canvas</span>
-        <a className="new-workflow" href="/" title="Start a new, empty workflow">
-          + New workflow
-        </a>
         <input
           className="title-input"
           aria-label="Workflow title"

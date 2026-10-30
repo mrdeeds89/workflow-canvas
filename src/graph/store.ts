@@ -9,27 +9,12 @@ export type SaveResult =
   | { ok: true; value: WorkflowDefinition }
   | { ok: false; code: "invalid" | "conflict" | "not_found"; issues?: ValidationIssue[] };
 
-export type ProjectSummary = { id: string; title: string };
+import type { Library, ProjectSummary } from "./library.ts";
 
-export type WorkflowSummary = {
-  id: string;
-  title: string;
-  /** null = Unfiled. */
-  projectId: string | null;
-  updatedAt: number;
-};
-
-/**
- * How workflows are organised: projects in creation order, and the workflows
- * in each project (or Unfiled) in their manual order. Organisation is kept
- * beside each workflow document, not inside it, so moving or reordering never
- * changes a workflow's revision or conflicts with an open editor.
- */
-export type Library = { projects: ProjectSummary[]; workflows: WorkflowSummary[] };
+export type { Library, ProjectSummary, WorkflowSummary } from "./library.ts";
+export { MAX_PROJECT_TITLE } from "./library.ts";
 
 export type MoveResult = { ok: true } | { ok: false; code: "not_found" | "no_such_project" };
-
-export const MAX_PROJECT_TITLE = 200;
 
 export type WorkflowStore = {
   create(input: { title: string; description?: string; projectId?: string | null }): WorkflowDefinition;
