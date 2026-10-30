@@ -18,6 +18,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  deriveReadiness,
   readinessSummary,
   type EdgeKind,
   type NodeKind,
@@ -29,6 +30,7 @@ import { validateWorkflow } from "../../src/graph/validate.ts";
 import { ApiError, createWorkflow, loadWorkflow, saveWorkflow } from "./api.ts";
 import { CardNode, type CardFlowNode } from "./CardNode.tsx";
 import { CARD_KINDS, makeId, newCard } from "./cards.ts";
+import { CardDetails, EdgeDetails } from "./DetailsPanel.tsx";
 
 type Meta = Omit<WorkflowDefinition, "nodes" | "edges">;
 type FlowEdge = Edge<{ edge: WorkflowEdge }>;
@@ -87,6 +89,33 @@ function buildDefinition(meta: Meta, nodes: CardFlowNode[], edges: FlowEdge[]): 
     })),
     edges: edges.flatMap((edge) => (edge.data ? [edge.data.edge] : [])),
   };
+}
+
+const CARD_W = 268 + 32;
+const CARD_H = 200 + 32;
+
+/**
+ * The nearest grid slot to `start` that no existing card covers, searching
+ * outward ring by ring, so a new card never lands on top of another.
+ */
+function freeSpot(start: { x: number; y: number }, nodes: CardFlowNode[]): { x: number; y: number } {
+  const covered = (x: number, y: number) =>
+    nodes.some((node) => {
+      const width = (node.measured?.width ?? 268) + 32;
+      const height = (node.measured?.height ?? 200) + 32;
+      return x < node.position.x + width && x + CARD_W > node.position.x && y < node.position.y + height && y + CARD_H > node.position.y;
+    });
+  for (let ring = 0; ring <= 8; ring += 1) {
+    for (let dy = -ring; dy <= ring; dy += 1) {
+      for (let dx = -ring; dx <= ring; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        const x = Math.round(start.x + dx * CARD_W);
+        const y = Math.round(start.y + dy * CARD_H);
+        if (!covered(x, y)) return { x, y };
+      }
+    }
+  }
+  return start;
 }
 
 function messageOf(error: unknown): string {
@@ -272,19 +301,58 @@ function Editor() {
   const addCard = useCallback(
     (kind: NodeKind) => {
       const center = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
-      const offset = (latest.current.nodes.length % 5) * 28;
-      const card = newCard(kind, {
-        x: Math.round(center.x - 130 + offset),
-        y: Math.round(center.y - 90 + offset),
-      });
+      const card = newCard(kind, freeSpot({ x: center.x - 134, y: center.y - 100 }, latest.current.nodes));
       setNodes((current) => [
         ...current.map((node) => (node.selected ? { ...node, selected: false } : node)),
         { ...toFlowNode(card), selected: true },
       ]);
+      setEdges((current) => current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)));
       markDirty();
     },
     [flow, markDirty],
   );
+
+  /** Edit one card from the details panel; readiness is re-derived like the server does. */
+  const updateCard = useCallback(
+    (id: string, change: (card: WorkflowNode) => WorkflowNode) => {
+      setNodes((current) =>
+        current.map((node) => {
+          if (node.id !== id) return node;
+          const next = change(node.data.card);
+          return { ...node, data: { card: { ...next, readiness: deriveReadiness(next.readiness, next.setup) } } };
+        }),
+      );
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  /** Edit one arrow; refuses a kind change that would create a dependency loop. */
+  const updateEdge = useCallback(
+    (next: WorkflowEdge) => {
+      const { meta: currentMeta, nodes: currentNodes, edges: currentEdges } = latest.current;
+      if (!currentMeta) return;
+      const candidate = buildDefinition(currentMeta, currentNodes, currentEdges);
+      const check = validateWorkflow({
+        ...candidate,
+        edges: candidate.edges.map((edge) => (edge.id === next.id ? next : edge)),
+      });
+      if (!check.ok && check.issues.some((issue) => issue.code === "dependency_cycle")) {
+        setNotice("Making this arrow a dependency would create a loop, so its kind was not changed.");
+        return;
+      }
+      setEdges((current) =>
+        current.map((edge) => (edge.id === next.id ? { ...toFlowEdge(next), selected: edge.selected } : edge)),
+      );
+      markDirty();
+    },
+    [markDirty],
+  );
+
+  const closeDetails = useCallback(() => {
+    setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)));
+    setEdges((current) => current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)));
+  }, []);
 
   const renameWorkflow = (title: string) => {
     setMeta((previous) => (previous ? { ...previous, title } : previous));
@@ -303,6 +371,12 @@ function Editor() {
   if (!meta) return <div className="screen-message">Loading…</div>;
 
   const summary = readinessSummary(buildDefinition(meta, nodes, edges));
+  // The panel follows a single selection: one card, or one arrow.
+  const selectedNodes = nodes.filter((node) => node.selected);
+  const selectedEdges = edges.filter((edge) => edge.selected);
+  const selectedCard = selectedNodes.length === 1 && selectedEdges.length === 0 ? selectedNodes[0] : undefined;
+  const selectedEdge = selectedEdges.length === 1 && selectedNodes.length === 0 ? selectedEdges[0] : undefined;
+  const titleOf = (id: string) => nodes.find((node) => node.id === id)?.data.card.title ?? "";
 
   return (
     <div className="app">
@@ -343,6 +417,7 @@ function Editor() {
         </div>
       )}
 
+      <div className="workspace">
       <main className="canvas">
         <ReactFlow
           nodes={nodes}
@@ -374,6 +449,27 @@ function Editor() {
           )}
         </ReactFlow>
       </main>
+      {selectedCard && (
+        <CardDetails
+          key={selectedCard.id}
+          card={selectedCard.data.card}
+          onChange={(change) => updateCard(selectedCard.id, change)}
+          onDelete={() => void flow.deleteElements({ nodes: [{ id: selectedCard.id }] })}
+          onClose={closeDetails}
+        />
+      )}
+      {selectedEdge?.data && (
+        <EdgeDetails
+          key={selectedEdge.id}
+          edge={selectedEdge.data.edge}
+          sourceTitle={titleOf(selectedEdge.source)}
+          targetTitle={titleOf(selectedEdge.target)}
+          onChange={updateEdge}
+          onDelete={() => void flow.deleteElements({ edges: [{ id: selectedEdge.id }] })}
+          onClose={closeDetails}
+        />
+      )}
+      </div>
 
       <footer className="statusbar">
         <span>

@@ -1,0 +1,405 @@
+import { useEffect, useState, type ReactNode } from "react";
+import type { EdgeKind, NodeKind, SetupTask, WorkflowEdge, WorkflowNode } from "../../src/graph/types.ts";
+// The same link rule the server enforces, so the panel and server agree.
+import { isSafeLink } from "../../src/graph/validate.ts";
+import { CARD_KINDS, EDGE_LABEL, READINESS_LABEL, makeId } from "./cards.ts";
+
+const EDGE_KINDS: readonly { kind: EdgeKind; hint: string }[] = [
+  { kind: "requires", hint: "The next step waits for this one to finish." },
+  { kind: "data", hint: "This step hands information to the next." },
+  { kind: "conditional", hint: "Only taken when the label's condition holds." },
+  { kind: "revision", hint: "Sends work back for changes. Not a dependency, so it may point backwards." },
+];
+
+// ---------------------------------------------------------------- card
+
+type CardDetailsProps = {
+  card: WorkflowNode;
+  onChange: (change: (card: WorkflowNode) => WorkflowNode) => void;
+  onDelete: () => void;
+  onClose: () => void;
+};
+
+export function CardDetails({ card, onChange, onDelete, onClose }: CardDetailsProps) {
+  const set = (patch: Partial<WorkflowNode>) => onChange((current) => ({ ...current, ...patch }));
+  const isNote = card.type === "note";
+
+  return (
+    <aside className="details" aria-label="Card details">
+      <PanelHeader title="Card" onClose={onClose} />
+
+      <Field label="Name">
+        <input
+          className="input"
+          value={card.title}
+          maxLength={500}
+          onChange={(event) => set({ title: event.target.value })}
+          autoFocus={card.title.startsWith("New ")}
+        />
+      </Field>
+
+      <Field label="Description">
+        <textarea
+          className="input input--area"
+          value={card.description}
+          maxLength={20_000}
+          rows={3}
+          onChange={(event) => set({ description: event.target.value })}
+        />
+      </Field>
+
+      <Field label="Type">
+        <select
+          className="input"
+          value={card.type}
+          onChange={(event) => set({ type: event.target.value as NodeKind })}
+        >
+          {CARD_KINDS.map(({ kind, label, hint }) => (
+            <option key={kind} value={kind}>
+              {label}: {hint}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {!isNote && (
+        <>
+          <StatusSection card={card} onChange={onChange} />
+
+          <Section title="Who owns what">
+            <ListEditor
+              label="Agent owns"
+              items={card.proposal.agentOwns}
+              placeholder="e.g. Write the draft from the research"
+              onChange={(agentOwns) => onChange((c) => ({ ...c, proposal: { ...c.proposal, agentOwns } }))}
+            />
+            <ListEditor
+              label="You own"
+              items={card.proposal.youOwn}
+              placeholder="e.g. Set tone, length and audience"
+              onChange={(youOwn) => onChange((c) => ({ ...c, proposal: { ...c.proposal, youOwn } }))}
+            />
+          </Section>
+
+          <SetupEditor tasks={card.setup} onChange={(setup) => onChange((c) => ({ ...c, setup }))} />
+        </>
+      )}
+
+      <div className="details__footer">
+        <button type="button" className="btn btn--danger" onClick={onDelete}>
+          Delete card
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function StatusSection({ card, onChange }: Pick<CardDetailsProps, "card" | "onChange">) {
+  const approved = card.readiness !== "proposed";
+  return (
+    <Section title="Status">
+      <div className="status-row">
+        <span className={`pill pill--${card.readiness}`}>{READINESS_LABEL[card.readiness]}</span>
+        {approved ? (
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onChange((c) => ({ ...c, readiness: "proposed" }))}
+          >
+            Move back to proposed
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => onChange((c) => ({ ...c, readiness: "not_configured" }))}
+          >
+            Approve
+          </button>
+        )}
+      </div>
+      <p className="hint">
+        {approved
+          ? "Configured turns on by itself when every setup check is ticked, and off again if one is unticked."
+          : "Proposed means drafted but not yet approved. Approving it lets the setup checklist decide when it is configured."}
+      </p>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------- owner lists
+
+function ListEditor({
+  label,
+  items,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  items: string[];
+  placeholder: string;
+  onChange: (items: string[]) => void;
+}) {
+  return (
+    <div className="list-editor">
+      <div className="list-editor__label">{label}</div>
+      {items.map((item, index) => (
+        <div className="row" key={index}>
+          <input
+            className="input"
+            value={item}
+            maxLength={2_000}
+            placeholder={placeholder}
+            aria-label={`${label} ${index + 1}`}
+            onChange={(event) => onChange(items.map((old, i) => (i === index ? event.target.value : old)))}
+          />
+          <RemoveButton label={`Remove ${label.toLowerCase()} line ${index + 1}`} onClick={() => onChange(items.filter((_, i) => i !== index))} />
+        </div>
+      ))}
+      <button type="button" className="btn btn--add" onClick={() => onChange([...items, ""])}>
+        + Add line
+      </button>
+    </div>
+  );
+}
+
+// ------------------------------------------------------- setup checklist
+
+function SetupEditor({ tasks, onChange }: { tasks: SetupTask[]; onChange: (tasks: SetupTask[]) => void }) {
+  const done = tasks.filter((task) => task.done).length;
+  const update = (id: string, patch: Partial<SetupTask>) =>
+    onChange(tasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
+
+  return (
+    <Section title={`Setup checklist${tasks.length > 0 ? ` (${done}/${tasks.length})` : ""}`}>
+      {tasks.length === 0 && <p className="hint">Checks this step must pass before it can hand off.</p>}
+      {tasks.map((task, index) => (
+        <SetupTaskRow
+          key={task.id}
+          task={task}
+          index={index}
+          onChange={(patch) => update(task.id, patch)}
+          onRemove={() => onChange(tasks.filter((other) => other.id !== task.id))}
+        />
+      ))}
+      <button
+        type="button"
+        className="btn btn--add"
+        onClick={() => onChange([...tasks, { id: makeId("check"), text: "", detail: "", link: "", done: false }])}
+      >
+        + Add check
+      </button>
+    </Section>
+  );
+}
+
+function SetupTaskRow({
+  task,
+  index,
+  onChange,
+  onRemove,
+}: {
+  task: SetupTask;
+  index: number;
+  onChange: (patch: Partial<SetupTask>) => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(task.detail !== "" || task.link !== "");
+  return (
+    <div className={`check${task.done ? " check--done" : ""}`}>
+      <div className="row">
+        <input
+          type="checkbox"
+          className="check__box"
+          checked={task.done}
+          aria-label={`Check ${index + 1} done`}
+          onChange={(event) => onChange({ done: event.target.checked })}
+        />
+        <input
+          className="input"
+          value={task.text}
+          maxLength={2_000}
+          placeholder="e.g. Pick the review model"
+          aria-label={`Check ${index + 1}`}
+          onChange={(event) => onChange({ text: event.target.value })}
+        />
+        <button
+          type="button"
+          className="icon-btn"
+          aria-expanded={open}
+          aria-label={open ? "Hide note and link" : "Add a note or link"}
+          title={open ? "Hide note and link" : "Add a note or link"}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "−" : "…"}
+        </button>
+        <RemoveButton label={`Remove check ${index + 1}`} onClick={onRemove} />
+      </div>
+      {open && (
+        <div className="check__more">
+          <textarea
+            className="input input--area"
+            value={task.detail}
+            maxLength={2_000}
+            rows={2}
+            placeholder="Why it matters (optional)"
+            aria-label={`Check ${index + 1} note`}
+            onChange={(event) => onChange({ detail: event.target.value })}
+          />
+          <LinkField value={task.link} index={index} onCommit={(link) => onChange({ link })} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A link is only written to the card once it is empty or a valid http(s)
+ * address, so a half-typed URL never reaches the server and blocks saving.
+ */
+function LinkField({ value, index, onCommit }: { value: string; index: number; onCommit: (link: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const trimmed = draft.trim();
+  const valid = isSafeLink(trimmed);
+
+  return (
+    <div className="link-field">
+      <div className="row">
+        <input
+          className={`input${valid ? "" : " input--bad"}`}
+          value={draft}
+          maxLength={2_000}
+          placeholder="https://… (optional)"
+          aria-label={`Check ${index + 1} link`}
+          aria-invalid={!valid}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            const next = event.target.value.trim();
+            if (isSafeLink(next) && next !== value) onCommit(next);
+          }}
+        />
+        {value !== "" && valid && trimmed === value && (
+          <a className="link-field__open" href={value} target="_blank" rel="noopener noreferrer">
+            Open
+          </a>
+        )}
+      </div>
+      {!valid && <p className="field-error">Links must start with http:// or https://. Not saved until fixed.</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- arrow
+
+type EdgeDetailsProps = {
+  edge: WorkflowEdge;
+  sourceTitle: string;
+  targetTitle: string;
+  onChange: (edge: WorkflowEdge) => void;
+  onDelete: () => void;
+  onClose: () => void;
+};
+
+export function EdgeDetails({ edge, sourceTitle, targetTitle, onChange, onDelete, onClose }: EdgeDetailsProps) {
+  const [label, setLabel] = useState(edge.label);
+  useEffect(() => setLabel(edge.label), [edge.id, edge.label]);
+  const needsLabel = edge.type === "conditional" && label.trim() === "";
+
+  return (
+    <aside className="details" aria-label="Arrow details">
+      <PanelHeader title="Arrow" onClose={onClose} />
+      <p className="details__route">
+        <strong>{sourceTitle || "Untitled step"}</strong> → <strong>{targetTitle || "Untitled step"}</strong>
+      </p>
+
+      <div className="field">
+        <span className="field__label">Kind</span>
+        <div className="kind-options" role="radiogroup" aria-label="Arrow kind">
+          {EDGE_KINDS.map(({ kind, hint }) => (
+            <label key={kind} className={`kind-option kind-option--${kind}${edge.type === kind ? " kind-option--on" : ""}`}>
+              <input
+                type="radio"
+                name="edge-kind"
+                value={kind}
+                checked={edge.type === kind}
+                onChange={() =>
+                  onChange({
+                    ...edge,
+                    type: kind,
+                    // A conditional arrow must say when it is taken.
+                    label: kind === "conditional" && edge.label.trim() === "" ? "when…" : edge.label,
+                  })
+                }
+              />
+              <span className="kind-option__name">{EDGE_LABEL[kind]}</span>
+              <span className="kind-option__hint">{hint}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <Field label={edge.type === "conditional" ? "Condition (required)" : "Label (optional)"}>
+        <input
+          className={`input${needsLabel ? " input--bad" : ""}`}
+          value={label}
+          maxLength={500}
+          placeholder={edge.type === "conditional" ? "e.g. approved" : "e.g. notes"}
+          onChange={(event) => {
+            setLabel(event.target.value);
+            // Never store an empty condition; keep the last good one until fixed.
+            if (!(edge.type === "conditional" && event.target.value.trim() === "")) {
+              onChange({ ...edge, label: event.target.value });
+            }
+          }}
+        />
+        {needsLabel && <p className="field-error">A conditional arrow needs a condition. Not saved until filled in.</p>}
+      </Field>
+
+      <div className="details__footer">
+        <button type="button" className="btn btn--danger" onClick={onDelete}>
+          Delete arrow
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+// -------------------------------------------------------------- pieces
+
+function PanelHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="details__head">
+      <h2>{title}</h2>
+      <button type="button" className="icon-btn" aria-label="Close details" title="Close" onClick={onClose}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="details__section">
+      <h3>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="field">
+      <span className="field__label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="icon-btn icon-btn--remove" aria-label={label} title="Remove" onClick={onClick}>
+      ×
+    </button>
+  );
+}

@@ -59,7 +59,7 @@ function finiteNumber(value: unknown): value is number {
  * allowed, so stored text cannot become a javascript: or data: payload when
  * the canvas renders it as an anchor.
  */
-function isSafeLink(value: unknown): value is string {
+export function isSafeLink(value: unknown): value is string {
   if (typeof value !== "string" || value.length > MAX_LINK) return false;
   if (value === "") return true;
   let parsed: URL;
