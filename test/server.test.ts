@@ -307,10 +307,10 @@ test("rejects unsupported methods with an Allow header", async () => {
   await withServer(async ({ base }) => {
     const created = await createWorkflow(base);
     const response = await fetch(`${base}/api/workflows/${created.id as string}`, {
-      method: "DELETE",
+      method: "PATCH",
     });
     assert.equal(response.status, 405);
-    assert.equal(response.headers.get("allow"), "GET, PUT");
+    assert.equal(response.headers.get("allow"), "GET, PUT, DELETE");
 
     const collection = await fetch(`${base}/api/workflows`, { method: "GET" });
     assert.equal(collection.status, 405);

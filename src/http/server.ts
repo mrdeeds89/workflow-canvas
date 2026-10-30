@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
-import type { WorkflowStore } from "../graph/store.ts";
+import { MAX_PROJECT_TITLE, type WorkflowStore } from "../graph/store.ts";
 import type { ValidationIssue, WorkflowDefinition } from "../graph/types.ts";
 
 /**
@@ -192,25 +192,59 @@ async function handle(
     return;
   }
 
+  if (path === "/api/library") {
+    if (method !== "GET") return methodNotAllowed(res, ["GET"]);
+    sendJson(res, 200, store.library());
+    return;
+  }
+
+  if (path === "/api/projects") {
+    if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+    await createProject(req, res, store);
+    return;
+  }
+
+  const projectMatch = /^\/api\/projects\/([^/]+)$/.exec(path);
+  if (projectMatch) {
+    const id = pathId(projectMatch[1]!);
+    if (id === null) return sendError(res, 400, "bad_request", "The project id is not valid.");
+    if (method !== "PATCH") return methodNotAllowed(res, ["PATCH"]);
+    await renameProject(req, res, store, id);
+    return;
+  }
+
+  const actionMatch = /^\/api\/workflows\/([^/]+)\/(move|duplicate)$/.exec(path);
+  if (actionMatch) {
+    const id = pathId(actionMatch[1]!);
+    if (id === null) return sendError(res, 400, "bad_request", "The workflow id is not valid.");
+    if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+    if (actionMatch[2] === "move") {
+      await moveWorkflow(req, res, store, id);
+    } else {
+      const copy = store.duplicateWorkflow(id);
+      if (!copy) return sendError(res, 404, "not_found", "No such workflow.");
+      res.setHeader("location", `/api/workflows/${encodeURIComponent(copy.id)}`);
+      sendJson(res, 201, copy);
+    }
+    return;
+  }
+
   const match = /^\/api\/workflows\/([^/]+)$/.exec(path);
   if (match) {
-    let id: string;
-    try {
-      id = decodeURIComponent(match[1]!);
-    } catch {
-      sendError(res, 400, "bad_request", "The workflow id is not valid.");
-      return;
-    }
-    if (id.length === 0 || id.length > MAX_ID_LENGTH) {
-      sendError(res, 400, "bad_request", "The workflow id is not valid.");
-      return;
-    }
+    const id = pathId(match[1]!);
+    if (id === null) return sendError(res, 400, "bad_request", "The workflow id is not valid.");
     if (method === "GET") return loadWorkflow(res, store, id);
     if (method === "PUT") {
       await saveWorkflow(req, res, store, id);
       return;
     }
-    return methodNotAllowed(res, ["GET", "PUT"]);
+    if (method === "DELETE") {
+      if (!store.deleteWorkflow(id)) return sendError(res, 404, "not_found", "No such workflow.");
+      res.writeHead(204, { "cache-control": "no-store" });
+      res.end();
+      return;
+    }
+    return methodNotAllowed(res, ["GET", "PUT", "DELETE"]);
   }
 
   sendError(res, 404, "not_found", "No such route.");
@@ -309,9 +343,91 @@ async function createWorkflow(
     return;
   }
 
-  const created = store.create({ title, description });
+  const { projectId } = body.value;
+  if (projectId !== undefined && projectId !== null && typeof projectId !== "string") {
+    sendError(res, 422, "invalid", "projectId must be a project id or null.");
+    return;
+  }
+  const library = store.library();
+  if (typeof projectId === "string" && !library.projects.some((project) => project.id === projectId)) {
+    sendError(res, 422, "no_such_project", "That project does not exist.");
+    return;
+  }
+
+  const created = store.create({ title, description, projectId: projectId ?? null });
   res.setHeader("location", `/api/workflows/${encodeURIComponent(created.id)}`);
   sendJson(res, 201, created);
+}
+
+/** Decode one path segment as an id, or null if it is not a valid id. */
+function pathId(segment: string): string | null {
+  let id: string;
+  try {
+    id = decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+  return id.length === 0 || id.length > MAX_ID_LENGTH ? null : id;
+}
+
+/** A project title from a request body, trimmed, or an error message. */
+function projectTitle(value: unknown): { ok: true; title: string } | { ok: false; message: string } {
+  if (!isRecord(value) || typeof value.title !== "string") {
+    return { ok: false, message: "A project needs a title." };
+  }
+  const title = value.title.trim();
+  if (title === "" || title.length > MAX_PROJECT_TITLE) {
+    return { ok: false, message: `A project title must be 1 to ${MAX_PROJECT_TITLE} characters.` };
+  }
+  return { ok: true, title };
+}
+
+async function createProject(req: IncomingMessage, res: ServerResponse, store: WorkflowStore): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  const parsed = projectTitle(body.value);
+  if (!parsed.ok) return sendError(res, 422, "invalid", parsed.message);
+  sendJson(res, 201, store.createProject(parsed.title));
+}
+
+async function renameProject(
+  req: IncomingMessage,
+  res: ServerResponse,
+  store: WorkflowStore,
+  id: string,
+): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  const parsed = projectTitle(body.value);
+  if (!parsed.ok) return sendError(res, 422, "invalid", parsed.message);
+  const renamed = store.renameProject(id, parsed.title);
+  if (!renamed) return sendError(res, 404, "not_found", "No such project.");
+  sendJson(res, 200, renamed);
+}
+
+async function moveWorkflow(
+  req: IncomingMessage,
+  res: ServerResponse,
+  store: WorkflowStore,
+  id: string,
+): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  if (!isRecord(body.value)) return sendError(res, 400, "bad_request", "Request body must be a JSON object.");
+  const { projectId, index } = body.value;
+  if (projectId !== null && typeof projectId !== "string") {
+    return sendError(res, 422, "invalid", "projectId must be a project id or null for Unfiled.");
+  }
+  if (!Number.isInteger(index) || (index as number) < 0) {
+    return sendError(res, 422, "invalid", "index must be a whole number of 0 or more.");
+  }
+  const result = store.moveWorkflow(id, projectId, index as number);
+  if (!result.ok) {
+    return result.code === "not_found"
+      ? sendError(res, 404, "not_found", "No such workflow.")
+      : sendError(res, 422, "no_such_project", "That project does not exist.");
+  }
+  sendJson(res, 200, store.library());
 }
 
 function loadWorkflow(res: ServerResponse, store: WorkflowStore, id: string): void {
