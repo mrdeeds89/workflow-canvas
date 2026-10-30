@@ -13,7 +13,9 @@ What exists:
 - Exact-pinned dev dependencies and a committed lockfile. Install with `npm ci --ignore-scripts`. `"private": true` stays set so the package is not published to npm.
 - A synthetic example in `examples/research-workflow.json`.
 
-What does not exist in the committed tree: a card details panel, arrow kind/label editing, undo, a workflow list or projects sidebar, delete, JSON import/export routes, Docker Compose, an access token, skill import, execution, and an automated browser suite.
+- Details panel (`web/src/DetailsPanel.tsx`), described below.
+
+What does not exist in the committed tree: undo, a workflow list or projects sidebar, delete, JSON import/export routes, Docker Compose, an access token, skill import, execution, and an automated browser suite.
 
 Public source: https://github.com/mrdeeds89/workflow-canvas under the MIT license. Publishing this repository does not deploy the service. The application stays loopback-only. History from before this public snapshot stays only in a private backup. It is not an ancestor of these commits and must not be pushed.
 
@@ -52,9 +54,22 @@ Toolbar adds a card, renames the workflow, and shows save state. Autosave is 600
 
 Chosen look: light theme and the current card design.
 
-Rough edges: new cards drop at the view centre and can overlap; backward `revision` arrows route awkwardly.
+New cards are placed in the nearest free grid slot rather than on top of existing cards. Rough edge: backward `revision` arrows route awkwardly.
 
 A browser check of the first canvas covered add, drag, connect, refused loop, delete, reload, and persistence across a service restart. That check is not an automated suite in this repository.
+
+## Details panel
+
+Selecting exactly one card or one arrow opens a right-hand panel.
+
+- Card: name, description, type, Approve / Move back to proposed, agent and you ownership lists, setup checklist with an optional note and link per check, delete. Edits re-derive readiness with the shared `deriveReadiness`, so the badge updates as checks are ticked.
+- Arrow: kind (requires, data, conditional, revision, each with a hint), label, delete. A conditional arrow is never stored without a condition. A kind change runs the shared validator and is refused if it would create a dependency loop.
+- A link is written to the card only once `isSafeLink` (exported from `validate.ts` and shared with the server) accepts it, so a half-typed URL never blocks saving.
+- Delete/Backspace inside a panel field edits text; React Flow ignores the key in inputs.
+
+Browser-verified against stored state: panel opens; rename persists; Backspace in a field does not delete the card; a "You own" line persists and shows on the card; ticking the last check makes an approved card `configured`, unticking returns `not_configured`, a `proposed` card stays `proposed` with every check ticked, approving a fully ticked card gives `configured`, and adding an open check gives `not_configured` with the card showing 2/3. Typecheck clean, 61 tests pass, build succeeds.
+
+Not yet verified: the bad-link warning, the arrow panel (kind, label, loop refusal), and delete from the panel. The agent's browser tool proved unreliable for this (calls alternated between two browsers), so Dom is testing hands-on; an automated browser suite on the VM would make agent verification independent of that tool.
 
 ## Decisions still in force
 
@@ -89,4 +104,4 @@ GitHub Actions run https://github.com/mrdeeds89/workflow-canvas/actions/runs/410
 
 ## Next action
 
-Build the card details panel: title, description, ownership lists, setup checklist, and approval (`proposed` to `not_configured`). Do not offer `tested` or `operational`. Then the sidebar described above. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.
+Collect Dom's hands-on feedback on the details panel and finish its unverified checks. Then build the sidebar described above. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.
