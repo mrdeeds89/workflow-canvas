@@ -382,6 +382,9 @@ function Editor() {
     <div className="app">
       <header className="toolbar">
         <span className="brand">Workflow Canvas</span>
+        <a className="new-workflow" href="/" title="Start a new, empty workflow">
+          + New workflow
+        </a>
         <input
           className="title-input"
           aria-label="Workflow title"
@@ -398,9 +401,6 @@ function Editor() {
           ))}
         </div>
         <SaveIndicator state={save} onRetry={() => void flush()} />
-        <a className="toolbar__new" href="/">
-          New workflow
-        </a>
       </header>
 
       {save.kind === "conflict" && (
