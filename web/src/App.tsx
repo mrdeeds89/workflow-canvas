@@ -125,10 +125,12 @@ function messageOf(error: unknown): string {
 
 /** What the shell can ask of the open editor. */
 export type EditorHandle = {
-  /** Resolve once every edit made so far is saved (or saving has stopped). */
-  settle(): Promise<void>;
+  /** Resolve once every edit made so far is saved. False means the write failed and the editor must stay open. */
+  settle(): Promise<boolean>;
   /** Rename the open workflow through the editor, so its revision stays in step. */
   rename(title: string): void;
+  /** Drop unsaved edits. Used when this workflow is being deleted. */
+  discard(): void;
 };
 
 type EditorProps = {
@@ -164,16 +166,42 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const pending = useRef(false);
   const blocked = useRef(false);
   const dirty = useRef(false);
+  // Set when this workflow is deleted, so a late save cannot write it back.
+  const retired = useRef(false);
+  // Kept beside React state so a save that finishes mid-edit still sends the
+  // revision the server just stored, not the one from the previous render.
+  const revision = useRef(0);
+  // One save promise per editor, including edits that arrive while it is in flight.
+  const inflight = useRef<Promise<boolean> | null>(null);
+  // A sidebar rename that arrives before the document has loaded.
+  const pendingTitle = useRef<string | null>(null);
+  const loadDone = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const run = (async () => {
       try {
         const { nodes: loadedNodes, edges: loadedEdges, ...rest } = await loadWorkflow(workflowId);
         if (cancelled) return;
-        setMeta(rest);
-        setNodes(loadedNodes.map(toFlowNode));
-        setEdges(loadedEdges.map(toFlowEdge));
+        // Skip only a late response for a document already on screen. The first
+        // load must paint, or a rename during Loading leaves the editor blank.
+        if (latest.current.meta && (dirty.current || saving.current)) return;
+        const title = pendingTitle.current;
+        pendingTitle.current = null;
+        const next = title === null ? rest : { ...rest, title };
+        revision.current = rest.revision;
+        const loadedNodesFlow = loadedNodes.map(toFlowNode);
+        const loadedEdgesFlow = loadedEdges.map(toFlowEdge);
+        latest.current = { meta: next, nodes: loadedNodesFlow, edges: loadedEdgesFlow };
+        setMeta(next);
+        setNodes(loadedNodesFlow);
+        setEdges(loadedEdgesFlow);
+        onTitleChange(workflowId, next.title);
+        if (title !== null) {
+          dirty.current = true;
+          setSave({ kind: "dirty" });
+          setChangeCount((count) => count + 1);
+        }
       } catch (error) {
         if (cancelled) return;
         setLoadError(
@@ -183,10 +211,14 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         );
       }
     })();
+    loadDone.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return () => {
       cancelled = true;
     };
-  }, [workflowId]);
+  }, [workflowId, onTitleChange]);
 
   useEffect(() => {
     if (meta) document.title = `${meta.title.trim() || "Untitled workflow"} · Workflow Canvas`;
@@ -205,52 +237,89 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     setChangeCount((count) => count + 1);
   }, []);
 
-  const flush = useCallback(async () => {
-    if (blocked.current) return;
+  /**
+   * Write the canvas. Edits that arrive while the write is in flight are sent
+   * before this promise resolves, using the revision the server just stored.
+   * A failed write stops. Retrying immediately hid the error and spun on a
+   * down server. Returns false when the latest attempt failed.
+   */
+  const flush = useCallback(async (): Promise<boolean> => {
+    if (blocked.current || retired.current) return false;
     if (saving.current) {
       pending.current = true;
-      return;
+      return inflight.current ?? Promise.resolve(false);
     }
-    const { meta: currentMeta, nodes: currentNodes, edges: currentEdges } = latest.current;
-    if (!currentMeta) return;
 
     saving.current = true;
-    dirty.current = false;
-    setSave({ kind: "saving" });
-    try {
-      const saved = await saveWorkflow(buildDefinition(currentMeta, currentNodes, currentEdges));
-      // The next save must expect this revision even before React re-renders.
-      if (latest.current.meta) latest.current.meta = { ...latest.current.meta, revision: saved.revision };
-      setMeta((previous) => (previous ? { ...previous, revision: saved.revision } : previous));
+    const run = (async (): Promise<boolean> => {
+      try {
+        while (!blocked.current && !retired.current) {
+          if (!dirty.current && !pending.current) return true;
+          pending.current = false;
+          const { meta: currentMeta, nodes: currentNodes, edges: currentEdges } = latest.current;
+          if (!currentMeta) return false;
+          dirty.current = false;
+          const definition = buildDefinition(currentMeta, currentNodes, currentEdges);
+          definition.revision = revision.current;
+          setSave({ kind: "saving" });
+          try {
+            const saved = await saveWorkflow(definition);
+            if (retired.current) return false;
+            revision.current = saved.revision;
+            // The next save must expect this revision even before React re-renders.
+            if (latest.current.meta) latest.current.meta = { ...latest.current.meta, revision: saved.revision };
+            setMeta((previous) => (previous ? { ...previous, revision: saved.revision } : previous));
 
-      // The server derives readiness from each checklist; show what it stored.
-      const derived = new Map(saved.nodes.map((card) => [card.id, card.readiness]));
-      setNodes((current) =>
-        current.map((node) => {
-          const readiness = derived.get(node.id);
-          return readiness && readiness !== node.data.card.readiness
-            ? { ...node, data: { card: { ...node.data.card, readiness } } }
-            : node;
-        }),
-      );
-      setSave(pending.current ? { kind: "dirty" } : { kind: "saved" });
-    } catch (error) {
-      // Unsaved again: a later flush (or leaving the workflow) will retry.
-      if (!(error instanceof ApiError && error.status === 409)) dirty.current = true;
-      if (error instanceof ApiError && error.status === 409) {
-        blocked.current = true;
-        setSave({ kind: "conflict" });
-      } else if (error instanceof ApiError && error.status === 422) {
-        setSave({ kind: "invalid", message: error.issues[0]?.message ?? error.message });
-      } else {
-        setSave({ kind: "error", message: messageOf(error) });
+            // The server derives readiness from each checklist; show what it stored.
+            const derived = new Map(saved.nodes.map((card) => [card.id, card.readiness]));
+            setNodes((current) =>
+              current.map((node) => {
+                const readiness = derived.get(node.id);
+                return readiness && readiness !== node.data.card.readiness
+                  ? { ...node, data: { card: { ...node.data.card, readiness } } }
+                  : node;
+              }),
+            );
+          } catch (error) {
+            if (retired.current) return false;
+            // Still unsaved, so Retry or a later edit can try again. Not now.
+            if (!(error instanceof ApiError && error.status === 409)) dirty.current = true;
+            if (error instanceof ApiError && error.status === 409) {
+              blocked.current = true;
+              pending.current = false;
+              dirty.current = false;
+              setSave({ kind: "conflict" });
+            } else if (error instanceof ApiError && error.status === 422) {
+              setSave({ kind: "invalid", message: error.issues[0]?.message ?? error.message });
+            } else {
+              setSave({ kind: "error", message: messageOf(error) });
+            }
+            // A newer edit arrived during this failed write. Send that once.
+            // The same failed body must not be retried here.
+            if (pending.current && !blocked.current && !retired.current) {
+              setSave({ kind: "dirty" });
+              continue;
+            }
+            return false;
+          }
+          if (dirty.current || pending.current) {
+            setSave({ kind: "dirty" });
+            continue;
+          }
+          setSave({ kind: "saved" });
+          return true;
+        }
+        return false;
+      } finally {
+        saving.current = false;
       }
+    })();
+
+    inflight.current = run;
+    try {
+      return await run;
     } finally {
-      saving.current = false;
-      if (pending.current && !blocked.current) {
-        pending.current = false;
-        void flush();
-      }
+      if (inflight.current === run) inflight.current = null;
     }
   }, []);
 
@@ -260,10 +329,11 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     return () => clearTimeout(timer);
   }, [changeCount, flush]);
 
-  // Leaving this workflow (switching in the sidebar) saves what is pending.
+  // Backup for a leave that did not go through the shell's settle. A deleted
+  // workflow must not be written back by this.
   useEffect(
     () => () => {
-      if (dirty.current && !blocked.current) void flush();
+      if (dirty.current && !blocked.current && !retired.current) void flush();
     },
     [flush],
   );
@@ -271,15 +341,35 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   useImperativeHandle(
     ref,
     () => ({
-      async settle() {
-        if (dirty.current && !blocked.current) await flush();
-        while ((saving.current || pending.current) && !blocked.current) {
-          await new Promise((wait) => setTimeout(wait, 50));
+      async settle(): Promise<boolean> {
+        if (retired.current) return true;
+        if (blocked.current) return false;
+        await loadDone.current;
+        if (retired.current) return true;
+        if (blocked.current) return false;
+        // Include an edit that lands while the previous write is still open.
+        // False means the write failed: the shell must stay here so the error
+        // remains visible and a late unmount write cannot race a reload.
+        while (!retired.current && !blocked.current && (dirty.current || saving.current || pending.current)) {
+          if (!latest.current.meta) return false;
+          const saved = await flush();
+          if (!saved) return false;
         }
+        return !blocked.current;
       },
       rename(title: string) {
+        if (!latest.current.meta) {
+          pendingTitle.current = title;
+          return;
+        }
         setMeta((previous) => (previous ? { ...previous, title } : previous));
+        latest.current.meta = { ...latest.current.meta, title };
         markDirty();
+      },
+      discard() {
+        retired.current = true;
+        dirty.current = false;
+        pending.current = false;
       },
     }),
     [flush, markDirty],
@@ -399,6 +489,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
 
   const renameWorkflow = (title: string) => {
     setMeta((previous) => (previous ? { ...previous, title } : previous));
+    if (latest.current.meta) latest.current.meta = { ...latest.current.meta, title };
     onTitleChange(workflowId, title);
     markDirty();
   };

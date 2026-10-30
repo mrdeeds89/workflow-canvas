@@ -14,7 +14,8 @@
     "smoke": "bash scripts/smoke-api.sh",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
     "build": "vite build",
-    "test:browser": "vite build --outDir ../dist/theme-test-web && playwright test"
+    "test:browser": "vite build --outDir ../dist/theme-test-web && playwright test",
+    "test:editor-browser": "bash scripts/editor-browser.sh"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",

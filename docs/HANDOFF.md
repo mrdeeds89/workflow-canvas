@@ -121,7 +121,7 @@ GitHub Actions run https://github.com/mrdeeds89/workflow-canvas/actions/runs/410
 - `node:sqlite` is experimental in Node 22 and pins the runtime to `engines`.
 - No list, delete, or JSON import/export route. Milestone 1 still wants import/export. Workflow delete in the sidebar decision is not built.
 - No Docker Compose file. The smoke script runs an ad-hoc container.
-- No automated browser test in the repo.
+- Editor browser checks: `bash scripts/editor-browser.sh`. Theme checks: `bash scripts/test-browser.sh`. Chromium only.
 
 ## Workflow brief
 
@@ -158,3 +158,16 @@ Verification on the README-pinned Node image, through SSH on the VM:
 Rerun **on the project VM** with `bash scripts/test-browser.sh`. This creates a throwaway container from the exact README image, installs pinned Playwright/Chromium plus its system dependencies inside that container, runs checks as the repository owner's UID, and removes the container. It publishes no port. Playwright starts its own API on container loopback with a temporary SQLite database and `dist/theme-test-web`, never `dist/web`; `reuseExistingServer` is false. The lightweight `npm run test:browser` entry point assumes browser dependencies are already installed. Test outputs are overwritten on rerun, so copy artifacts first if retaining evidence.
 
 Limits: Chromium desktop only; no Firefox/WebKit/mobile/screen-reader/forced-colors certification, complete keyboard interaction audit, or pixel-baseline comparison. No theme schema/backend changes. Verification uses an exact theme-only index export on the project VM, not the mixed working tree. No live preview build, deployment or publication is part of this increment.
+
+
+## Editor audit
+
+Repeatable Chromium checks live in `test/editor-browser/editor.spec.mjs`. Rerun on the project VM with `bash scripts/editor-browser.sh`. That script builds into `dist/editor-browser`, starts a throwaway loopback service on `127.0.0.1:18788` with a temporary database, runs the suite, restarts that service, and checks the same database. It does not use `wc-preview` or its volume. The published port is asserted loopback-only. The container is removed on exit.
+
+A failed save stays on screen until Retry, a later edit, or a successful leave. It is not retried in a loop, and a failed leave does not switch away, so a late write cannot race the next open. A rename that arrives while the workflow is still loading is kept, and that first load still paints the canvas. Switching waits for the write already in flight, including an edit that arrives during that write. Deleting the open workflow drops unsaved edits first.
+
+Verified after the brief and theme commits, on the pinned image `node:22-bookworm@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd`, Chromium from `mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea`: typecheck passed, Node tests 80 pass / 0 fail. Browser suite: 17 passed, and the throwaway restart check passed. Two of those tests lock the review findings: a failed save does not switch away, and a rename during load still opens the canvas. Not covered: Firefox, WebKit, mobile, dragging a workflow onto another project, and deleting an arrow from the panel.
+
+## Next action
+
+Reload the preview for the save fix. Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.

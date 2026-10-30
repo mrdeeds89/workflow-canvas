@@ -26,6 +26,22 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
+type UrlMode = "push" | "replace" | "keep";
+
+function writeUrl(id: string, mode: UrlMode) {
+  if (mode === "keep") return;
+  const url = `?w=${encodeURIComponent(id)}`;
+  if (mode === "replace") window.history.replaceState(null, "", url);
+  else if (idFromUrl() !== id) window.history.pushState(null, "", url);
+}
+
+/** Let the next editor mount before a queued switch settles it. */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
 /** Sidebar of workflows beside the open workflow's canvas. */
 export function Shell() {
   const [library, setLibrary] = useState<Library | null>(null);
@@ -35,6 +51,11 @@ export function Shell() {
   });
   const [error, setError] = useState<string | null>(null);
   const editor = useRef<EditorHandle>(null);
+  const currentIdRef = useRef(currentId);
+  currentIdRef.current = currentId;
+  // Switches run one at a time. A click during a save waits for that save,
+  // so a fast return cannot load a copy that the save has not written yet.
+  const chain = useRef(Promise.resolve());
 
   const refresh = useCallback(async () => {
     const next = await fetchLibrary();
@@ -42,12 +63,26 @@ export function Shell() {
     return next;
   }, []);
 
-  /** Open a workflow and record it in the address bar (for Back and bookmarks). */
-  const open = useCallback((id: string, replace = false) => {
-    setCurrentId(id);
-    const url = `?w=${encodeURIComponent(id)}`;
-    if (replace) window.history.replaceState(null, "", url);
-    else if (idFromUrl() !== id) window.history.pushState(null, "", url);
+  const go = useCallback((id: string, mode: UrlMode = "push") => {
+    const run = chain.current.then(async () => {
+      if (id !== currentIdRef.current) {
+        const saved = await editor.current?.settle();
+        if (saved === false) return;
+      }
+      if (id === currentIdRef.current) {
+        writeUrl(id, mode);
+        return;
+      }
+      currentIdRef.current = id;
+      setCurrentId(id);
+      writeUrl(id, mode);
+      await nextFrame();
+    });
+    chain.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }, []);
 
   // First load: open the workflow in the address, else the first in the
@@ -59,23 +94,26 @@ export function Shell() {
         if (idFromUrl()) return;
         const first = loaded.workflows.find((w) => w.projectId !== null) ?? loaded.workflows[0];
         if (first) {
-          open(first.id, true);
+          void go(first.id, "replace");
         } else {
           const created = await createWorkflow("Untitled workflow");
           await refresh();
-          open(created.id, true);
+          void go(created.id, "replace");
         }
       } catch (err) {
         setError(`Could not load your workflows: ${messageOf(err)}`);
       }
     })();
-  }, [refresh, open]);
+  }, [refresh, go]);
 
   useEffect(() => {
-    const onPop = () => setCurrentId(idFromUrl());
+    const onPop = () => {
+      const id = idFromUrl();
+      if (id) void go(id, "keep");
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  }, [go]);
 
   useEffect(() => {
     if (!error) return;
@@ -105,12 +143,14 @@ export function Shell() {
   }, []);
 
   const actions: SidebarActions = {
-    open: (id) => open(id),
+    open: (id) => {
+      void go(id);
+    },
     newWorkflow: (projectId) =>
       attempt(async () => {
         const created = await createWorkflow("Untitled workflow", projectId);
         await refresh();
-        open(created.id);
+        await go(created.id);
       }),
     newProject: (title) =>
       attempt(async () => {
@@ -137,24 +177,28 @@ export function Shell() {
     duplicate: (id) =>
       attempt(async () => {
         // Copy what is on screen, not an older saved version.
-        if (id === currentId) await editor.current?.settle();
+        if (id === currentId) {
+          const saved = await editor.current?.settle();
+          if (saved === false) return;
+        }
         const copy = await duplicateWorkflow(id);
         await refresh();
-        open(copy.id);
+        await go(copy.id);
       }),
     remove: (id, title) =>
       attempt(async () => {
         if (!window.confirm(`Delete "${displayTitle(title)}"? This cannot be undone.`)) return;
+        if (id === currentId) editor.current?.discard();
         await deleteWorkflow(id);
         const next = await refresh();
-        if (id !== currentId) return;
+        if (id !== currentIdRef.current && id !== currentId) return;
         const fallback = next.workflows[0];
         if (fallback) {
-          open(fallback.id, true);
+          await go(fallback.id, "replace");
         } else {
           const created = await createWorkflow("Untitled workflow");
           await refresh();
-          open(created.id, true);
+          await go(created.id, "replace");
         }
       }),
     move: (id, projectId, index) =>
