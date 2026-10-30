@@ -15,7 +15,7 @@ What exists:
 
 What does not exist in the committed tree: a card details panel, arrow kind/label editing, undo, a workflow list or projects sidebar, delete, JSON import/export routes, Docker Compose, an access token, skill import, execution, and an automated browser suite.
 
-History from before this public snapshot stays only in a private backup. It is not an ancestor of these commits and must not be pushed.
+Public source: https://github.com/mrdeeds89/workflow-canvas under the MIT license. Publishing this repository does not deploy the service. The application stays loopback-only. History from before this public snapshot stays only in a private backup. It is not an ancestor of these commits and must not be pushed.
 
 ## Card model
 
@@ -78,7 +78,7 @@ Run on the pinned image from the README: `npm ci --ignore-scripts`, `npm run typ
 
 Checked for this snapshot on Node v22.23.4 in `node:22-bookworm@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd`: `npm ci --ignore-scripts` installed 48 packages from the unchanged lockfile and reported 0 vulnerabilities, typecheck passed, tests passed 61 / failed 0, and `npm run build` succeeded. `scripts/smoke-api.sh` was not re-run; do not treat the earlier smoke 26/26 figure as current.
 
-GitHub Actions is set up to run the same install, typecheck, test, and build on Node 22.23.4 with read-only contents permission. This note does not claim an Actions result until a run has finished.
+GitHub Actions run https://github.com/mrdeeds89/workflow-canvas/actions/runs/41073172234 on the push of `76f0897bd4ae37700c9849a23aaef2899014a500` finished with conclusion success. The job "typecheck, test, build" passed checkout, Node 22.23.4 setup, `npm ci --ignore-scripts`, typecheck, test, and build. The workflow permission is contents read-only. It does not deploy. The run also printed non-failing notices: the pinned actions target Node.js 20 and were forced onto Node.js 24, and `ubuntu-latest` is scheduled to move to Ubuntu 26.
 
 ## Known gaps
 
