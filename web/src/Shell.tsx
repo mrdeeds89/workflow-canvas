@@ -14,6 +14,8 @@ import {
 } from "./api.ts";
 import { Sidebar, displayTitle, type SidebarActions } from "./Sidebar.tsx";
 
+import { ThemeSelector } from "./ThemeSelector.tsx";
+
 const COLLAPSED_KEY = "workflow-canvas.sidebar-collapsed";
 
 function idFromUrl(): string | null {
@@ -28,7 +30,9 @@ function messageOf(error: unknown): string {
 export function Shell() {
   const [library, setLibrary] = useState<Library | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(idFromUrl);
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_KEY) === "1");
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSED_KEY) === "1"; } catch { return false; }
+  });
   const [error, setError] = useState<string | null>(null);
   const editor = useRef<EditorHandle>(null);
 
@@ -81,7 +85,7 @@ export function Shell() {
 
   const toggle = () => {
     setCollapsed((was) => {
-      localStorage.setItem(COLLAPSED_KEY, was ? "0" : "1");
+      try { localStorage.setItem(COLLAPSED_KEY, was ? "0" : "1"); } catch { /* Storage is optional. */ }
       return !was;
     });
   };
@@ -165,6 +169,7 @@ export function Shell() {
         <Sidebar library={library} currentId={currentId} collapsed={collapsed} onToggle={toggle} actions={actions} />
       )}
       <div className="shell__main">
+        <ThemeSelector />
         {error && (
           <div className="banner banner--warn" role="alert">
             {error}

@@ -126,3 +126,23 @@ GitHub Actions run https://github.com/mrdeeds89/workflow-canvas/actions/runs/410
 ## Next action
 
 Collect Dom's hands-on feedback on the details panel and the sidebar. Then trigger design (saved, not run), then the access token and Compose hosting. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.
+
+## Theme increment — isolated snapshot verification
+
+This section supersedes the earlier historical browser-suite gap.
+
+Light / Dark / Follow system is presentation-only. Light remains the default even on a dark OS. The labelled Theme selector lives above the editor and remains available with the sidebar folded or while loading. `workflow-canvas.theme` stores only validated `light`, `dark`, or `system`; missing/invalid/unavailable storage falls back to Light. Blocked storage still permits an in-memory choice, and sidebar storage is also guarded so it cannot prevent rendering. Only Follow system subscribes to media-query changes, with cleanup when leaving that mode.
+
+`web/src/tokens.css` is the shared palette for the shell, cards, panels, menus, forms, warning/error/success states, focus, React Flow controls/background/minimap, and SVG edge paths/markers. Dark uses the approved preview palette; Light retains the original appearance with darker small-text accents/muted text and stronger input borders. Edge kind names and inferred annotations are now visible even with an empty user label; stored edge labels/semantics are unchanged. Readiness labels, setup counts, check marks and line patterns remain non-color cues. Theme is applied before React's first render; an initially blank browser page before the module loads is not guaranteed flash-free. CSP was not weakened.
+
+Verification on the README-pinned Node image, through SSH on the VM:
+
+- Baseline: typecheck and 70 Node tests passed. New helper tests failed before implementation, then passed; first browser test failed on the missing theme attribute before UI implementation.
+- Theme-only snapshot `bash scripts/test-browser.sh`: `npm ci --ignore-scripts` installed 53 packages; audit 0 vulnerabilities; typecheck passed; **72 Node tests passed, 0 failed** (70 baseline tests plus two theme tests; unrelated brief/schema/editor work excluded); isolated Vite build succeeded; **4 Chromium browser tests passed**.
+- Browser coverage: all three choices, explicit Light default on dark OS, keyboard Tab/ArrowDown/Enter and focus outline, reload persistence, OS changes in system mode and no effect in explicit modes, collapsed sidebar, invalid and blocked storage, unchanged graph/revision after theme changes, menu keyboard focus, card/link errors, conditional arrow errors, real API-induced stale-revision warning, SVG marker/path color equality in both palettes, and no page errors.
+- Contrast: axe color-contrast found **0 violations in eight scans** (menu, card, arrow, warning in both palettes). It also reported incomplete checks on clipped/scaled canvas content: this is not an accessibility certification. Fifteen explicit token pairs per palette additionally passed thresholds (text 4.5:1; edges/focus 3:1), including every card-kind accent. Exact ratios and axe incomplete nodes are retained in the JSON artifacts.
+- Eight screenshots in ignored `test-results/theme/theme-{light,dark}-cards-edges-menus-details-warnings-contrast/`: `{light,dark}-menu-canvas.png`, `-details-warning.png`, `-arrow-warning.png`, `-conflict-warning.png`. The same directories contain `{light,dark}-contrast.json`. Screenshots inspected for the menu/canvas, details and warning layouts. Failure traces are retained only on failure.
+
+Rerun **on the project VM** with `bash scripts/test-browser.sh`. This creates a throwaway container from the exact README image, installs pinned Playwright/Chromium plus its system dependencies inside that container, runs checks as the repository owner's UID, and removes the container. It publishes no port. Playwright starts its own API on container loopback with a temporary SQLite database and `dist/theme-test-web`, never `dist/web`; `reuseExistingServer` is false. The lightweight `npm run test:browser` entry point assumes browser dependencies are already installed. Test outputs are overwritten on rerun, so copy artifacts first if retaining evidence.
+
+Limits: Chromium desktop only; no Firefox/WebKit/mobile/screen-reader/forced-colors certification, complete keyboard interaction audit, or pixel-baseline comparison. No theme schema/backend changes. Verification uses an exact theme-only index export on the project VM, not the mixed working tree. No live preview build, deployment or publication is part of this increment.

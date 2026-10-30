@@ -29,7 +29,7 @@ import {
 import { validateWorkflow } from "../../src/graph/validate.ts";
 import { ApiError, loadWorkflow, saveWorkflow } from "./api.ts";
 import { CardNode, type CardFlowNode } from "./CardNode.tsx";
-import { CARD_KINDS, makeId, newCard } from "./cards.ts";
+import { CARD_KINDS, EDGE_LABEL, makeId, newCard } from "./cards.ts";
 import { CardDetails, EdgeDetails } from "./DetailsPanel.tsx";
 
 type Meta = Omit<WorkflowDefinition, "nodes" | "edges">;
@@ -48,19 +48,19 @@ const AUTOSAVE_MS = 600;
 const NOTICE_MS = 6000;
 
 const EDGE_COLOR: Record<EdgeKind, string> = {
-  requires: "#475569",
-  data: "#2563eb",
-  conditional: "#d97706",
-  revision: "#9333ea",
+  requires: "var(--edge-requires)",
+  data: "var(--edge-data)",
+  conditional: "var(--edge-conditional)",
+  revision: "var(--edge-revision)",
 };
 
 const KIND_COLOR: Record<NodeKind, string> = {
-  task: "#64748b",
-  agent: "#4f46e5",
-  integration: "#0d9488",
-  approval: "#d97706",
-  artifact: "#0284c7",
-  note: "#ca8a04",
+  task: "var(--kind-task)",
+  agent: "var(--kind-agent)",
+  integration: "var(--kind-integration)",
+  approval: "var(--kind-approval)",
+  artifact: "var(--kind-artifact)",
+  note: "var(--kind-note)",
 };
 
 function toFlowNode(card: WorkflowNode): CardFlowNode {
@@ -72,7 +72,7 @@ function toFlowEdge(edge: WorkflowEdge): FlowEdge {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    label: edge.label === "" ? undefined : edge.label,
+    label: `${EDGE_LABEL[edge.type]}${edge.label ? `: ${edge.label}` : ""}${edge.inferred ? " (inferred)" : ""}`,
     className: `edge edge--${edge.type}${edge.inferred ? " edge--inferred" : ""}`,
     markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18, color: EDGE_COLOR[edge.type] },
     data: { edge },
