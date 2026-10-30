@@ -4,6 +4,7 @@ import { migrateToCurrent } from "./migrate.ts";
 import { validateWorkflow } from "./validate.ts";
 import type { ValidationIssue, WorkflowDefinition } from "./types.ts";
 import { SCHEMA_VERSION } from "./types.ts";
+import { createHarnessStore, type HarnessStore } from "../harness/store.ts";
 
 export type SaveResult =
   | { ok: true; value: WorkflowDefinition }
@@ -29,6 +30,8 @@ export type WorkflowStore = {
   deleteWorkflow(id: string): boolean;
   /** Copy a workflow as a new one, placed right after the original. */
   duplicateWorkflow(id: string): WorkflowDefinition | null;
+  /** Hermes job links and observations. Separate from documents and revisions. */
+  harness: HarnessStore;
   close(): void;
 };
 
@@ -56,6 +59,7 @@ export function openStore(path: string): WorkflowStore {
     );
   `);
   upgradeWorkflowsTable(db);
+  const harness = createHarnessStore(db);
 
   const insert = db.prepare(
     "INSERT INTO workflows (id, revision, document, project_id, position, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -80,6 +84,8 @@ export function openStore(path: string): WorkflowStore {
   );
   const renameProjectStmt = db.prepare("UPDATE projects SET title = ? WHERE id = ?");
   const removeWorkflow = db.prepare("DELETE FROM workflows WHERE id = ?");
+  const removeHarnessLink = db.prepare("DELETE FROM harness_links WHERE workflow_id = ?");
+  const removeHarnessObservations = db.prepare("DELETE FROM harness_observations WHERE workflow_id = ?");
 
   function idsIn(projectId: string | null): string[] {
     return (listIds.all(projectId) as { id: string }[]).map((row) => row.id);
@@ -234,6 +240,8 @@ export function openStore(path: string): WorkflowStore {
         const row = select.get(id) as WorkflowRow | undefined;
         if (!row) return false;
         removeWorkflow.run(id);
+        removeHarnessLink.run(id);
+        removeHarnessObservations.run(id);
         renumber(row.project_id, idsIn(row.project_id));
         return true;
       });
@@ -255,6 +263,8 @@ export function openStore(path: string): WorkflowStore {
         return copy;
       });
     },
+
+    harness,
 
     close() {
       db.close();

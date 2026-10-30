@@ -2,7 +2,7 @@
 
 A standalone visual workspace for designing workflows as cards and arrows: who owns each step, and which checks must pass before handing off.
 
-**Status:** design-only editor. Schema validation, SQLite save/reload, a loopback HTTP API, a canvas, a card and arrow details panel, a project sidebar, a workflow brief, and Light / Dark / system themes exist and are tested. There is no authentication, no execution, and no deployment package.
+**Status:** design-only editor. Schema validation, SQLite save/reload, a loopback HTTP API, a canvas, a card and arrow details panel, a project sidebar, a workflow brief, Light / Dark / system themes, and a read-only Hermes job evidence panel exist and are tested. There is no authentication, no execution, and no deployment package.
 
 Licensed under the [MIT License](LICENSE). Copyright (c) 2026 DomP.
 
@@ -15,6 +15,7 @@ Licensed under the [MIT License](LICENSE). Copyright (c) 2026 DomP.
 - Write a workflow brief from the toolbar: one plain-text box. Suggested headings are Purpose, Inputs required, Expected outputs, Success criteria, Limits, and Open questions. The text is saved as written and never runs anything.
 - Rename the workflow from the toolbar or the sidebar. A bare visit opens the first workflow, or creates one, and puts `?w=<id>` in the address.
 - List workflows in a sidebar: projects, manual order, move, rename, duplicate, and delete with confirmation. Folding the sidebar does not change the graph.
+- Link a workflow to an existing Hermes cron job and see, read-only: its schedule, enabled/paused state, next and last run, the latest **whole-job** result, recent attempts, where the observation came from, and how old it is. Warnings cover stale or disconnected data, a job that is missing, an unsupported Hermes version, a silent scheduler, an overdue job, and a job whose definition changed since linking. Nothing on the panel can run, pause, resume, or edit the job, and a job result never changes a card. Three synthetic example jobs ship in `examples/hermes-observations/`, so the panel works without Hermes. See `docs/HERMES-INTEGRATION.md` and `harness/hermes/README.md`.
 - Choose Light, Dark, or Follow system. Light is the default, including on a dark OS. The choice is presentation only and does not change the saved workflow.
 - Autosave about 600 ms after a change. The server derives `configured` / `not_configured` and writes that back onto the cards.
 - Dependency cycles are refused before they are drawn. A conflicting save (`409`) stops autosave and asks for a reload. A failed save stays on the open workflow until Retry, another edit, or a successful leave.
@@ -27,6 +28,7 @@ Licensed under the [MIT License](LICENSE). Copyright (c) 2026 DomP.
 - Drawing a new arrow as anything other than `requires`. Kind and label are edited after the arrow exists.
 - JSON import/export routes.
 - Docker Compose packaging, authentication, skill import, and execution.
+- Installing the Hermes exporter on a harness. It is a manual, documented step (`harness/hermes/README.md`), and nothing in this repository does it.
 - `tested` and `operational` readiness. Those report a real run. This editor cannot assert them.
 
 ## Safety
@@ -82,6 +84,7 @@ The process inside the container listens on all of its own interfaces so the pub
 | `WORKFLOW_CANVAS_DB` | `data/canvas.sqlite` | SQLite file. Ignored by Git. |
 | `WORKFLOW_CANVAS_ALLOWED_ORIGINS` | empty (deny browser origins) | Comma-separated exact origins. |
 | `WORKFLOW_CANVAS_STATIC` | `dist/web` | Built UI. Without `index.html` the service stays API-only. |
+| `WORKFLOW_CANVAS_HARNESS_CONFIG` | unset (no harnesses) | Private JSON file naming the Hermes harnesses this server may observe. Keep it outside the repository. Try the public examples with `examples/hermes-observations/harness-config.example.json`. |
 
 API routes:
 
@@ -91,8 +94,9 @@ API routes:
 - `POST /api/workflows` (optional `projectId`)
 - `GET`, `PUT`, and `DELETE /api/workflows/:id`
 - `POST /api/workflows/:id/move`, `POST /api/workflows/:id/duplicate`
+- `GET /api/harnesses` (labels and profiles only), `GET /api/workflows/:id/harness`, `PUT` / `DELETE /api/workflows/:id/harness-link`, `POST /api/workflows/:id/harness-link/refresh` (pulls a read-only observation, rate-limited)
 
-No execution route and no agent route. A document save sends the revision it loaded; the server stores the next revision and returns `409` on a stale write. Moving or reordering a workflow does not change that revision. The document field `brief` is plain text, stored and returned verbatim. The read contract for a future assistant is in `docs/ARCHITECTURE.md`.
+No execution route and no agent route. No route creates, edits, pauses, resumes, runs, or deletes a Hermes job. Linking and refreshing never change a workflow's revision. A document save sends the revision it loaded; the server stores the next revision and returns `409` on a stale write. Moving or reordering a workflow does not change that revision. The document field `brief` is plain text, stored and returned verbatim. The read contract for a future assistant is in `docs/ARCHITECTURE.md`.
 
 ## Checks
 

@@ -193,6 +193,38 @@ Before the fix, on an isolated export of `d5c70f4` plus the new test only, that 
 
 The roadmap again says the primary audience is Hermes users first, step 5 is a Read-only Hermes adapter, and the first mapped example is still an open choice: a read-only market observer with existing-output inspection and offline replay first, or a non-financial example. That does not choose the mapping example. The non-financial execution pilot is unchanged. No job name or private source is in the document.
 
+## Hermes job evidence (read-only prototype, uncommitted)
+
+Roadmap step 5. Contract and Dom's decisions: `docs/HERMES-INTEGRATION.md`. Install steps for a harness: `harness/hermes/README.md`. Dom approved the build on 2026-10-30. **Nothing is installed on any harness.** No SSH key or `authorized_keys` line exists, and no Hermes job was created, changed, paused, resumed, or fired.
+
+Built:
+
+- `harness/hermes/workflow_canvas_exporter.py`, a standard-library forced-command exporter. It does not import Hermes. It answers only `snapshot <job_id>`, takes its profile from the key, and gates on Hermes 0.22.x. It prints allowlisted fields only. Hermes's own `executions.db` is only ever opened `immutable`. When a `-wal` exists, the exporter reads a private copy of the db and WAL in a temp directory that is never inside the Hermes home, and accepts it only if neither original changed during the copy. A plain `mode=ro` open creates `-wal`/`-shm` (observed in a spike on a copy) and races Hermes's own close (found by independent review). Also `conformance_check.py` and `state-fixtures.json`.
+- `src/harness/` holds the shared observation parser and panel wording (`observation.ts`), the private config loader (`config.ts`), the shell-free ssh and fixture transports (`source.ts`), and link/observation tables beside the workflow table (`store.ts`).
+- Routes in `src/http/server.ts`, the toolbar **Job evidence** panel in `web/src/HarnessPanel.tsx`, and three synthetic example jobs plus an example and an ssh template config in `examples/hermes-observations/`.
+
+Verified on the project VM, 2026-10-30, against the working tree on top of `5cf4924`, not an isolated export. Pinned image `node:22-bookworm@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd`, Node v22.23.4, which includes Python 3.11 and an ssh client:
+
+- `npm run typecheck`: passed, both projects.
+- `npm test`: **136 pass / 0 fail / 0 skipped** (80 before plus 56 new in `harness-observation`, `harness-server`, `harness-exporter`). The exporter tests spawn the real script against throwaway Hermes homes, including a live WAL writer, a WAL checkpointed away mid-read, `TMPDIR` pointing inside the Hermes home, and a hang-up during the copy, which leaves no temp copy behind. Mutation checks: a deliberate break of the ported state rule failed one test, and restoring the old `mode=ro` read failed three (the race test reported the side files recreated). Both were restored.
+- `npm run build` (184 modules): succeeded.
+- `bash scripts/editor-browser.sh`: **23 passed** (18 before plus 5 job evidence), loopback-only, service answered after restart, **2 restart checks passed**, including link and evidence surviving the restart. Three consecutive clean runs after fixing a test race (below).
+- `bash scripts/test-browser.sh`: 4 theme tests passed.
+- `conformance_check.py` with Hermes 0.22.5's own interpreter and an empty throwaway `HERMES_HOME`: **14/14 agree** (exporter, Hermes, and recorded expectations).
+- Exporter run by hand against a *copy* of one real profile's cron store: valid output, copy byte-identical afterwards, five malformed requests refused. Copy deleted.
+- Manual look through a loopback tunnel at a throwaway instance with only the public examples, Light and Dark. Two layout fixes followed: facts beside attempts, failed cells marked. Computed contrast for the panel's token pairs is 5.39:1 to 13.34:1 in Light and 6.70:1 to 9.90:1 in Dark. The live preview was not rebuilt or restarted.
+
+Failures found and fixed during verification:
+
+- The restart-sentinel browser test checked for the link form before the panel had loaded, so it sometimes skipped linking. It now waits for the panel to finish loading.
+- An independent review (full patch, no session context) found no security problems and three logic errors. All three are fixed, with tests. (1) The exporter's WAL read could recreate `-wal`/`-shm` if Hermes closed the database between check and open. (2) A newer refusal lent its fresh age to older job data. The panel now ages and labels job data separately ("Job details observed …", plus "Latest check … returned …"). (3) `constructor` passed the status allowlist and skipped "unrecognized"; lookups now use own properties only. Suggestions also taken: refresh is rate-limited per harness/profile/job, so re-linking cannot bypass it; observations must name the linked profile exactly; a corrupt stored row reads as absent instead of a 500. A second independent review of the fixed patch (all 4695 lines) passed and confirmed the three fixes. From its hardening suggestions: the exporter removes its temp copy on SIGTERM/SIGHUP/SIGINT/SIGPIPE, it refuses rather than fall back into the Hermes home, and stored pull outcomes use the safe lookup. Not taken yet: a size cap on the ledger copy, and a stronger change check than (size, mtime, inode).
+
+Not yet verified (each needs a harness install, which is a separate approval):
+
+- The real ssh transport end to end. Argument construction and failure classification are unit-tested; no pull has gone over ssh.
+- `restrict` and forced-command enforcement by sshd: PTY, forwarding, and other commands refused at the SSH layer. The exporter's own refusal of other commands is tested.
+- Before/after checks on a live harness: `hermes cron list --all`, `hermes cron runs`, and the execution row count unchanged, with no new listener.
+
 ## Next action
 
-Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run, then the access token and Compose hosting. The live preview still serves the previous `dist/web`; this commit does not rebuild or restart it. Do not add execution, skill import, a deployment workflow, or a non-loopback bind. Publishing the source is not a deployment. The refused browser-back URL mismatch remains a follow-up.
+Job evidence: review and commit the prototype, then, only with approval, install the exporter and one restricted key per profile on the first harness and run the three "not yet verified" checks above. Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run, then the access token and Compose hosting. The live preview still serves the previous `dist/web`; this commit does not rebuild or restart it. Do not add execution, skill import, a deployment workflow, or a non-loopback bind. Publishing the source is not a deployment. The refused browser-back URL mismatch remains a follow-up.

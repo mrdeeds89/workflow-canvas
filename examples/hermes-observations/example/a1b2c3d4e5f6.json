@@ -1,0 +1,78 @@
+{
+  "format": "workflow-canvas.hermes-observation",
+  "version": 1,
+  "observed_at": "2026-10-30T12:00:00Z",
+  "harness": {
+    "hermes_version": "0.22.5",
+    "exporter_version": "0.1.0",
+    "profile": "example"
+  },
+  "scheduler": {
+    "ticker_heartbeat_age_s": 12.0
+  },
+  "executions_available": true,
+  "job": {
+    "job_id": "a1b2c3d4e5f6",
+    "name": "Daily research digest",
+    "schedule": {
+      "kind": "cron",
+      "display": "0 8 * * *"
+    },
+    "timezone": null,
+    "display_state": "scheduled",
+    "enabled": true,
+    "runnable": true,
+    "paused_at": null,
+    "next_run_at": "2026-10-31T08:00:00Z",
+    "last_run_at": "2026-10-30T08:00:04Z",
+    "last_status": "ok",
+    "has_error_detail": false,
+    "delivery_kinds": [
+      "telegram"
+    ],
+    "fingerprint": {
+      "definition_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "skills": [
+        "research-digest"
+      ],
+      "script_present": false,
+      "no_agent": false,
+      "model_pinned": false
+    }
+  },
+  "executions": [
+    {
+      "id": "ex-digest-3",
+      "status": "completed",
+      "source": "scheduler",
+      "scheduled_instant": "2026-10-30T08:00:00Z",
+      "claimed_at": "2026-10-30T08:00:01Z",
+      "started_at": "2026-10-30T08:00:02Z",
+      "finished_at": "2026-10-30T08:03:41Z",
+      "progress_at": "2026-10-30T08:03:41Z",
+      "delivery_outcome": "delivered"
+    },
+    {
+      "id": "ex-digest-2",
+      "status": "completed",
+      "source": "scheduler",
+      "scheduled_instant": "2026-10-29T08:00:00Z",
+      "claimed_at": "2026-10-29T08:00:01Z",
+      "started_at": "2026-10-29T08:00:02Z",
+      "finished_at": "2026-10-29T08:04:10Z",
+      "progress_at": "2026-10-29T08:04:10Z",
+      "delivery_outcome": "delivered"
+    },
+    {
+      "id": "ex-digest-1",
+      "status": "completed",
+      "source": "scheduler",
+      "scheduled_instant": "2026-10-28T08:00:00Z",
+      "claimed_at": "2026-10-28T08:00:01Z",
+      "started_at": "2026-10-28T08:00:03Z",
+      "finished_at": "2026-10-28T08:02:55Z",
+      "progress_at": "2026-10-28T08:02:55Z",
+      "delivery_outcome": "delivered"
+    }
+  ]
+}

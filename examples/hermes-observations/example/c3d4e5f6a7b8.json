@@ -1,0 +1,67 @@
+{
+  "format": "workflow-canvas.hermes-observation",
+  "version": 1,
+  "observed_at": "2026-10-30T12:00:00Z",
+  "harness": {
+    "hermes_version": "0.22.5",
+    "exporter_version": "0.1.0",
+    "profile": "example"
+  },
+  "scheduler": {
+    "ticker_heartbeat_age_s": 12.0
+  },
+  "executions_available": true,
+  "job": {
+    "job_id": "c3d4e5f6a7b8",
+    "name": "Weekly reading list",
+    "schedule": {
+      "kind": "cron",
+      "display": "0 9 * * 1"
+    },
+    "timezone": null,
+    "display_state": "paused",
+    "enabled": false,
+    "runnable": false,
+    "paused_at": "2026-10-20T17:30:00Z",
+    "next_run_at": "2026-10-26T09:00:00Z",
+    "last_run_at": "2026-10-19T09:00:05Z",
+    "last_status": "ok",
+    "has_error_detail": false,
+    "delivery_kinds": [
+      "email"
+    ],
+    "fingerprint": {
+      "definition_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "skills": [
+        "reading-list"
+      ],
+      "script_present": false,
+      "no_agent": false,
+      "model_pinned": false
+    }
+  },
+  "executions": [
+    {
+      "id": "ex-reading-2",
+      "status": "completed",
+      "source": "scheduler",
+      "scheduled_instant": "2026-10-19T09:00:00Z",
+      "claimed_at": "2026-10-19T09:00:01Z",
+      "started_at": "2026-10-19T09:00:02Z",
+      "finished_at": "2026-10-19T09:06:12Z",
+      "progress_at": "2026-10-19T09:06:12Z",
+      "delivery_outcome": "delivered"
+    },
+    {
+      "id": "ex-reading-1",
+      "status": "completed",
+      "source": "scheduler",
+      "scheduled_instant": "2026-10-12T09:00:00Z",
+      "claimed_at": "2026-10-12T09:00:01Z",
+      "started_at": "2026-10-12T09:00:02Z",
+      "finished_at": "2026-10-12T09:05:40Z",
+      "progress_at": "2026-10-12T09:05:40Z",
+      "delivery_outcome": "delivered"
+    }
+  ]
+}

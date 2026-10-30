@@ -26,6 +26,10 @@ imports/
 *.bundle
 PRIVATE-BACKUP.md
 private-backups/
+# Private Hermes harness config and SSH keys (examples/ holds the public templates)
+/harness-config*.json
+/private/
+id_*
 # Dependencies/builds/test output
 node_modules/
 dist/

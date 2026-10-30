@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { openStore } from "../graph/store.ts";
+import { loadHarnessConfig } from "../harness/config.ts";
 import { createApp } from "./server.ts";
 
 /**
@@ -26,10 +27,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   process.exit(1);
 }
 
+// Private file naming the Hermes harnesses this server may observe. Never in the repository.
+const harnessConfig = loadHarnessConfig(process.env.WORKFLOW_CANVAS_HARNESS_CONFIG);
+
 mkdirSync(dirname(dbPath), { recursive: true });
 
 const store = openStore(dbPath);
-const server = createApp({ store, allowedOrigins, staticDir });
+const server = createApp({ store, allowedOrigins, staticDir, harnessConfig });
 
 server.listen(port, host, () => {
   console.log(`workflow-canvas API listening on http://${host}:${port}`);
@@ -39,6 +43,11 @@ server.listen(port, host, () => {
     allowedOrigins.length > 0
       ? `allowed browser origins: ${allowedOrigins.join(", ")}`
       : "allowed browser origins: none (non-browser clients only)",
+  );
+  console.log(
+    harnessConfig.harnesses.length > 0
+      ? `observed harnesses (read-only): ${harnessConfig.harnesses.map((item) => `${item.label} [${item.profiles.join(", ")}]`).join("; ")}`
+      : "observed harnesses: none",
   );
   console.log("execution: disabled by design");
 });

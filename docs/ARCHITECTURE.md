@@ -1,6 +1,6 @@
 # Architecture proposal
 
-Status: partially implemented. Schema 3, validation, SQLite persistence, the design-time HTTP API, the canvas, a card and arrow details panel, a workflow sidebar, a plain-text brief, and Light / Dark / system themes exist. Docker Compose, authentication, import/export routes, and execution do not.
+Status: partially implemented. Schema 3, validation, SQLite persistence, the design-time HTTP API, the canvas, a card and arrow details panel, a workflow sidebar, a plain-text brief, Light / Dark / system themes, and a read-only Hermes job evidence panel exist. Docker Compose, authentication, import/export routes, and execution do not.
 
 ## Deployment
 Browser client → application HTTP service → SQLite and persistent data volume.
@@ -28,6 +28,15 @@ WorkflowRun is a future separate entity. Design checklist completion must never 
 Validate on the server. Use SQLite transactions and optimistic revision checks. Reject oversized payloads, dangling references, duplicate IDs and unsupported schema versions. Enforce graph semantics per edge type rather than globally forbidding explanatory revision arrows. Export portable JSON without host-specific absolute paths or secrets. Choose migration/backup strategy before data becomes valuable.
 
 Implemented routes: `GET /api/health`, `GET /api/library`, `POST /api/projects`, `PATCH /api/projects/:id`, `POST /api/workflows`, `GET` / `PUT` / `DELETE /api/workflows/:id`, `POST /api/workflows/:id/move`, and `POST /api/workflows/:id/duplicate`. There is no import, export, or execution route. Library membership and order live beside the document, so moving or reordering does not change a workflow revision.
+
+## Hermes job evidence (read-only)
+
+Contract and decisions: `docs/HERMES-INTEGRATION.md`. Hermes schedules and runs jobs. Canvas only observes.
+
+- **Harness side.** `harness/hermes/workflow_canvas_exporter.py` is the forced command of a restricted SSH key, one key per Hermes profile. It answers only `snapshot <job_id>`, does not import Hermes, and creates or changes no file in the Hermes home. It prints an allowlisted observation and refuses unknown Hermes releases.
+- **Server side.** `src/harness/config.ts` loads the private harness config (`WORKFLOW_CANVAS_HARNESS_CONFIG`). `src/harness/source.ts` pulls over `ssh` with a fixed, shell-free argument list, or reads fixture files for the examples. `src/harness/store.ts` keeps `harness_links` and `harness_observations` beside the workflow table. Links are not part of the document, never change its revision, and are dropped on workflow delete. A request names a harness and profile by label; it can never supply a host, user, key, path, or command.
+- **Shared.** `src/harness/observation.ts` validates observations by copying allowlisted fields only, and derives what the panel says. That covers the whole-job result wording, freshness from the server clock, and the warning flags. The browser corrects its own clock with `serverNow`.
+- **Browser.** `web/src/HarnessPanel.tsx` renders every observed value as text. A job result is never mapped onto cards, and `tested` / `operational` readiness stay refused.
 
 ## Security posture
 Private single-user first, not Internet-ready. Verify request origins and rendering safety; private networking is not a substitute for validation. Never interpret imported text, labels, or expressions as code. No execution API in first milestones. Add authentication and authorization before remote/public or multi-user exposure. Cloudflare and Supabase are not needed for initial deployment.

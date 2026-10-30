@@ -3,6 +3,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, resolve, sep } from "node:path";
 import { MAX_PROJECT_TITLE, type WorkflowStore } from "../graph/store.ts";
 import type { ValidationIssue, WorkflowDefinition } from "../graph/types.ts";
+import { EMPTY_CONFIG, type HarnessConfig } from "../harness/config.ts";
+import { JOB_ID_PATTERN, LABEL_PATTERN, parseObservation, type PullOutcome } from "../harness/observation.ts";
+import { defaultSource, type ObservationSource } from "../harness/source.ts";
 
 /**
  * Private design-time API over the workflow store.
@@ -21,6 +24,25 @@ export type AppOptions = {
   allowedOrigins?: string[];
   /** Built canvas UI to serve for non-API paths. Omit to serve the API only. */
   staticDir?: string;
+  /** Hermes harnesses this server may observe. Default: none. */
+  harnessConfig?: HarnessConfig;
+  /** Where observations come from. Tests replace this; the default uses the config's transports. */
+  observationSource?: ObservationSource;
+  /** Clock, for tests. */
+  now?: () => number;
+};
+
+type Harness = {
+  config: HarnessConfig;
+  source: ObservationSource;
+  now: () => number;
+  /** One pull per workflow at a time; a second Refresh joins the first. */
+  inflight: Map<string, Promise<void>>;
+  /**
+   * Last pull per harness/profile/job, in memory. Re-linking, or several
+   * workflows linked to one job, cannot pull that job faster than the limit.
+   */
+  lastPull: Map<string, number>;
 };
 
 /**
@@ -136,10 +158,24 @@ function originAllowed(req: IncomingMessage, allowedOrigins: string[]): boolean 
   return allowedOrigins.includes(origin);
 }
 
-export function createApp({ store, allowedOrigins = [], staticDir }: AppOptions): Server {
+export function createApp({
+  store,
+  allowedOrigins = [],
+  staticDir,
+  harnessConfig = EMPTY_CONFIG,
+  observationSource,
+  now = Date.now,
+}: AppOptions): Server {
   const staticRoot = staticDir === undefined ? undefined : resolve(staticDir);
+  const harness: Harness = {
+    config: harnessConfig,
+    source: observationSource ?? defaultSource(now),
+    now,
+    inflight: new Map(),
+    lastPull: new Map(),
+  };
   return createServer((req, res) => {
-    void handle(req, res, store, allowedOrigins, staticRoot).catch(() => {
+    void handle(req, res, store, allowedOrigins, staticRoot, harness).catch(() => {
       if (!res.headersSent) {
         sendError(res, 500, "internal_error", "The request could not be completed.");
       } else {
@@ -155,6 +191,7 @@ async function handle(
   store: WorkflowStore,
   allowedOrigins: string[],
   staticRoot: string | undefined,
+  harness: Harness,
 ): Promise<void> {
   const method = req.method ?? "GET";
   let path: string;
@@ -227,6 +264,37 @@ async function handle(
       sendJson(res, 201, copy);
     }
     return;
+  }
+
+  if (path === "/api/harnesses") {
+    if (method !== "GET") return methodNotAllowed(res, ["GET"]);
+    // Labels only. Hosts, users and key paths never leave the server.
+    sendJson(res, 200, { harnesses: harness.config.harnesses });
+    return;
+  }
+
+  const harnessMatch = /^\/api\/workflows\/([^/]+)\/(harness|harness-link|harness-link\/refresh)$/.exec(path);
+  if (harnessMatch) {
+    const id = pathId(harnessMatch[1]!);
+    if (id === null) return sendError(res, 400, "bad_request", "The workflow id is not valid.");
+    if (store.load(id) === null) return sendError(res, 404, "not_found", "No such workflow.");
+    const route = harnessMatch[2];
+    if (route === "harness") {
+      if (method !== "GET") return methodNotAllowed(res, ["GET"]);
+      return sendJson(res, 200, harnessView(store, harness, id));
+    }
+    if (route === "harness-link") {
+      if (method === "PUT") return linkJob(req, res, store, harness, id);
+      if (method === "DELETE") {
+        store.harness.unlink(id);
+        res.writeHead(204, { "cache-control": "no-store" });
+        res.end();
+        return;
+      }
+      return methodNotAllowed(res, ["PUT", "DELETE"]);
+    }
+    if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+    return refreshJob(res, store, harness, id);
   }
 
   const match = /^\/api\/workflows\/([^/]+)$/.exec(path);
@@ -483,4 +551,107 @@ async function saveWorkflow(
     return;
   }
   sendError(res, 404, "not_found", "No such workflow.");
+}
+
+// --- Hermes job links (read-only observation) -------------------------------------
+//
+// These routes store which Hermes job a workflow is linked to and pull a
+// read-only observation of it. None of them can pause, resume, run, edit,
+// create, or delete a job, and no request can choose a host, command, or path.
+
+/** Everything the panel needs. `serverNow` lets a browser on another machine correct its clock. */
+function harnessView(store: WorkflowStore, harness: Harness, id: string) {
+  const link = store.harness.link(id);
+  const latest = store.harness.latest(id);
+  return {
+    link,
+    latestJob: latest.job,
+    latestAny: latest.any,
+    configured: link ? harness.config.target(link.harness, link.profile) !== null : null,
+    thresholds: harness.config.thresholds,
+    serverNow: harness.now(),
+  };
+}
+
+async function linkJob(
+  req: IncomingMessage,
+  res: ServerResponse,
+  store: WorkflowStore,
+  harness: Harness,
+  id: string,
+): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  if (!isRecord(body.value)) return sendError(res, 400, "bad_request", "Request body must be a JSON object.");
+  const { harness: label, profile, jobId } = body.value;
+  if (typeof label !== "string" || !LABEL_PATTERN.test(label) || typeof profile !== "string" || !LABEL_PATTERN.test(profile)) {
+    return sendError(res, 422, "invalid", "Choose a configured harness and profile.");
+  }
+  if (harness.config.target(label, profile) === null) {
+    return sendError(res, 422, "unknown_harness", "That harness and profile are not configured on this server.");
+  }
+  if (typeof jobId !== "string" || !JOB_ID_PATTERN.test(jobId)) {
+    return sendError(res, 422, "invalid_job_id", "A Hermes job id is 6 to 32 lowercase hexadecimal characters.");
+  }
+  store.harness.setLink(id, label, profile, jobId, harness.now());
+  sendJson(res, 200, harnessView(store, harness, id));
+}
+
+async function refreshJob(res: ServerResponse, store: WorkflowStore, harness: Harness, id: string): Promise<void> {
+  const link = store.harness.link(id);
+  if (!link) return sendError(res, 404, "not_linked", "This workflow is not linked to a Hermes job.");
+
+  const running = harness.inflight.get(id);
+  if (running) {
+    await running;
+    return sendJson(res, 200, harnessView(store, harness, id));
+  }
+  const now = harness.now();
+  const jobKey = `${link.harness}/${link.profile}/${link.jobId}`;
+  const last = Math.max(link.lastAttemptAt ?? -Infinity, harness.lastPull.get(jobKey) ?? -Infinity);
+  if (Number.isFinite(last) && now - last < harness.config.minRefreshMs) {
+    const wait = Math.ceil((harness.config.minRefreshMs - (now - last)) / 1000);
+    res.setHeader("retry-after", String(wait));
+    return sendError(res, 429, "refresh_too_soon", `This job was checked moments ago. Try again in ${wait} s.`);
+  }
+
+  harness.lastPull.set(jobKey, now);
+  const pull = pullObservation(store, harness, id, link);
+  harness.inflight.set(id, pull);
+  try {
+    await pull;
+  } finally {
+    harness.inflight.delete(id);
+  }
+  sendJson(res, 200, harnessView(store, harness, id));
+}
+
+async function pullObservation(
+  store: WorkflowStore,
+  harness: Harness,
+  id: string,
+  link: { harness: string; profile: string; jobId: string },
+): Promise<void> {
+  const record = (outcome: PullOutcome, observation?: Parameters<WorkflowStore["harness"]["recordPull"]>[4]) =>
+    store.harness.recordPull(id, link, outcome, harness.now(), observation);
+
+  const target = harness.config.target(link.harness, link.profile);
+  if (target === null) return record("not_configured");
+
+  const fetched = await harness.source(target, link.jobId).catch(() => ({ ok: false as const, outcome: "unreachable" as const }));
+  if (!fetched.ok) return record(fetched.outcome);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fetched.raw) as unknown;
+  } catch {
+    return record("bad_output");
+  }
+  const observation = parseObservation(parsed);
+  if (!observation.ok) return record("bad_output");
+  const value = observation.value;
+  // The harness must be answering about the job and profile this link names.
+  if (value.kind === "job" && value.job.jobId !== link.jobId) return record("bad_output");
+  if (value.harness.profile !== link.profile) return record("bad_output");
+  record("ok", { value, raw: fetched.raw, source: fetched.source });
 }

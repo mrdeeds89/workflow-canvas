@@ -1,5 +1,6 @@
 import type { Library, ProjectSummary } from "../../src/graph/library.ts";
 import type { ValidationIssue, WorkflowDefinition } from "../../src/graph/types.ts";
+import type { LinkView, StoredObservation, Thresholds } from "../../src/harness/observation.ts";
 
 export type { Library, ProjectSummary, WorkflowSummary } from "../../src/graph/library.ts";
 
@@ -77,4 +78,39 @@ export function loadWorkflow(id: string): Promise<WorkflowDefinition> {
 /** Saves the document; its `revision` is the one the client expects to replace. */
 export function saveWorkflow(definition: WorkflowDefinition): Promise<WorkflowDefinition> {
   return request("PUT", `/api/workflows/${encodeURIComponent(definition.id)}`, definition);
+}
+
+// --- Hermes job evidence (read-only) -------------------------------------------
+
+export type HarnessSummary = { label: string; profiles: string[]; exampleJobs: string[] };
+
+export type JobEvidenceView = {
+  link: LinkView | null;
+  latestJob: StoredObservation | null;
+  latestAny: StoredObservation | null;
+  configured: boolean | null;
+  thresholds: Thresholds;
+  serverNow: number;
+};
+
+export async function fetchHarnesses(): Promise<HarnessSummary[]> {
+  return (await request<{ harnesses: HarnessSummary[] }>("GET", "/api/harnesses")).harnesses;
+}
+
+export function fetchJobEvidence(workflowId: string): Promise<JobEvidenceView> {
+  return request("GET", `/api/workflows/${encodeURIComponent(workflowId)}/harness`);
+}
+
+export function linkJob(workflowId: string, harness: string, profile: string, jobId: string): Promise<JobEvidenceView> {
+  return request("PUT", `/api/workflows/${encodeURIComponent(workflowId)}/harness-link`, { harness, profile, jobId });
+}
+
+export async function unlinkJob(workflowId: string): Promise<void> {
+  const response = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}/harness-link`, { method: "DELETE" });
+  if (!response.ok) throw new ApiError(response.status, "http_error", `Unlink failed with status ${response.status}.`);
+}
+
+/** Ask the server to pull a fresh observation. It never runs, pauses, or resumes the job. */
+export function refreshJob(workflowId: string): Promise<JobEvidenceView> {
+  return request("POST", `/api/workflows/${encodeURIComponent(workflowId)}/harness-link/refresh`);
 }

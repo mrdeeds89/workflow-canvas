@@ -59,6 +59,7 @@ docker run -d --name "$CONTAINER" --user "$UID_GID" -e HOME=/tmp \
   -e WORKFLOW_CANVAS_DB=/data/canvas.sqlite \
   -e WORKFLOW_CANVAS_ALLOWED_ORIGINS="${BASE}" \
   -e WORKFLOW_CANVAS_STATIC=/work/dist/editor-browser \
+  -e WORKFLOW_CANVAS_HARNESS_CONFIG=/work/test/fixtures/harness/browser-config.json \
   "$NODE_IMAGE" \
   node --experimental-strip-types --disable-warning=ExperimentalWarning src/http/main.ts >/dev/null
 

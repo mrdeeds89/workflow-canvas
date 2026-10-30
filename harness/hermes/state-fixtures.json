@@ -1,0 +1,16 @@
+[
+  {"case": "plain scheduled", "job": {"enabled": true, "state": "scheduled"}, "expect": {"display_state": "scheduled", "runnable": true}},
+  {"case": "missing state", "job": {"enabled": true}, "expect": {"display_state": "scheduled", "runnable": true}},
+  {"case": "enabled defaults true", "job": {}, "expect": {"display_state": "scheduled", "runnable": true}},
+  {"case": "paused and disabled", "job": {"enabled": false, "state": "paused", "paused_at": "2026-10-01T00:00:00+00:00"}, "expect": {"display_state": "paused", "runnable": false}},
+  {"case": "disabled with pause stamp only", "job": {"enabled": false, "state": "scheduled", "paused_at": "2026-10-01T00:00:00+00:00"}, "expect": {"display_state": "paused", "runnable": false}},
+  {"case": "disabled without any marker", "job": {"enabled": false, "state": "scheduled"}, "expect": {"display_state": "scheduled", "runnable": false}},
+  {"case": "disabled with empty state", "job": {"enabled": false, "state": ""}, "expect": {"display_state": "paused", "runnable": false}},
+  {"case": "enabled with leftover paused state", "job": {"enabled": true, "state": "paused"}, "expect": {"display_state": "scheduled", "runnable": false}},
+  {"case": "enabled with leftover pause stamp", "job": {"enabled": true, "state": "scheduled", "paused_at": "2026-10-01T00:00:00+00:00"}, "expect": {"display_state": "scheduled", "runnable": false}},
+  {"case": "completed", "job": {"enabled": false, "state": "completed"}, "expect": {"display_state": "completed", "runnable": false}},
+  {"case": "error while enabled", "job": {"enabled": true, "state": "error"}, "expect": {"display_state": "error", "runnable": true}},
+  {"case": "running", "job": {"enabled": true, "state": "running"}, "expect": {"display_state": "running", "runnable": true}},
+  {"case": "null state", "job": {"enabled": true, "state": null}, "expect": {"display_state": "scheduled", "runnable": true}},
+  {"case": "padded paused state", "job": {"enabled": false, "state": " paused "}, "expect": {"display_state": "paused", "runnable": false}}
+]

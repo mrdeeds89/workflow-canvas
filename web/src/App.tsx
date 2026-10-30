@@ -31,6 +31,7 @@ import { ApiError, loadWorkflow, saveWorkflow } from "./api.ts";
 import { CardNode, type CardFlowNode } from "./CardNode.tsx";
 import { CARD_KINDS, EDGE_LABEL, makeId, newCard } from "./cards.ts";
 import { BriefPanel } from "./BriefPanel.tsx";
+import { HarnessPanel } from "./HarnessPanel.tsx";
 import { CardDetails, EdgeDetails } from "./DetailsPanel.tsx";
 
 type Meta = Omit<WorkflowDefinition, "nodes" | "edges">;
@@ -161,6 +162,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [changeCount, setChangeCount] = useState(0);
   const [briefOpen, setBriefOpen] = useState(true);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const flow = useReactFlow();
 
   // Saves read the newest canvas through this ref, not a stale closure.
@@ -558,6 +560,14 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         >
           Workflow brief
         </button>
+        <button
+          type="button"
+          className="brief-toggle"
+          aria-expanded={evidenceOpen}
+          onClick={() => setEvidenceOpen((open) => !open)}
+        >
+          Job evidence
+        </button>
         <div className="add-group" role="group" aria-label="Add a card">
           <span className="add-group__label">Add</span>
           {CARD_KINDS.map(({ kind, label, hint }) => (
@@ -569,6 +579,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         <SaveIndicator state={save} onRetry={() => void flush()} />
       </header>
       {briefOpen && <BriefPanel value={meta.brief} onChange={setBrief} onClose={() => setBriefOpen(false)} />}
+      {evidenceOpen && <HarnessPanel workflowId={workflowId} onClose={() => setEvidenceOpen(false)} />}
 
       {save.kind === "conflict" && (
         <div className="banner banner--warn" role="alert">

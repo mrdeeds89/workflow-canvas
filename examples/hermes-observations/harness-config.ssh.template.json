@@ -1,0 +1,23 @@
+{
+  "staleAfterMinutes": 15,
+  "heartbeatSilentSeconds": 180,
+  "minRefreshSeconds": 60,
+  "harnesses": [
+    {
+      "label": "lab",
+      "transport": "ssh",
+      "host": "harness.example.lan",
+      "port": 22,
+      "user": "hermes",
+      "knownHostsFile": "/srv/workflow-canvas/private/known_hosts",
+      "profiles": {
+        "default": {
+          "identityFile": "/srv/workflow-canvas/private/keys/lab-default"
+        },
+        "worker": {
+          "identityFile": "/srv/workflow-canvas/private/keys/lab-worker"
+        }
+      }
+    }
+  ]
+}
