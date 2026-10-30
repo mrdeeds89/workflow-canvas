@@ -80,6 +80,17 @@ Not yet verified: the bad-link warning, the arrow panel (kind, label, loop refus
 - Sidebar, when built: the whole sidebar folds away. Individual projects do not collapse. Projects are folders created in this app, not linked to an external project list. Order inside a project is manual. Moving between projects is both drag-and-drop and a "Move to…" menu. Sidebar actions are rename of workflows and projects, delete of a workflow with a confirmation step, and duplicate of a workflow. Deleting or duplicating a whole project was not requested; ask before adding it.
 - Build order: card details panel first, then the sidebar. The sidebar needs a project entity, a workflow list route, rename, delete, duplicate, and stored ordering, with tests, and existing workflows placed in an unfiled group.
 
+## Decisions from Dom: deploy and triggers (2026-10-30)
+
+Dom wants workflows to be deployable, started by an **event, a state change, or a schedule (cron)**.
+
+- **First version is design-only.** Triggers are designed and saved on the workflow now; actually running them is a later, separate step. Nothing in this step executes anything.
+- **Who does the work, when runs exist: chosen per card.** A card is either done by a Hermes agent (via Hermes tasks or scheduled jobs) or by a script/tool the canvas runs itself.
+- **Safety rule for runs:** every Approval card pauses the run until Dom approves it. Independently of this rule, anything that places live trades or moves money still needs Dom's explicit authorization outside the canvas; a workflow run or a completed card is never that authorization.
+- **Event triggers:** mainly a message to Dom or a bot (e.g. Telegram). Also wanted, as nice-to-haves: a webhook from an outside service, another workflow or Hermes task finishing, and a market or price condition.
+
+Order: finish the details panel feedback, then the sidebar, then trigger design. Execution needs its own plan and approval before any code runs workflows.
+
 ## Open questions
 
 Defaults below stay in force unless changed.
