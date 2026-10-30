@@ -188,8 +188,17 @@ export function Shell() {
     remove: (id, title) =>
       attempt(async () => {
         if (!window.confirm(`Delete "${displayTitle(title)}"? This cannot be undone.`)) return;
-        if (id === currentId) editor.current?.discard();
-        await deleteWorkflow(id);
+        const open = id === currentIdRef.current;
+        // Hold writes for the attempt only. Retire after the row is gone, so a
+        // failed delete can still save, and a late unmount cannot write it back.
+        if (open) editor.current?.holdWrites();
+        try {
+          await deleteWorkflow(id);
+        } catch (error) {
+          if (open && currentIdRef.current === id) editor.current?.releaseWrites();
+          throw error;
+        }
+        if (open && currentIdRef.current === id) editor.current?.discard();
         const next = await refresh();
         if (id !== currentIdRef.current && id !== currentId) return;
         const fallback = next.workflows[0];

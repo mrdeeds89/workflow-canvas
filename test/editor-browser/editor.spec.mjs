@@ -292,6 +292,44 @@ test("delete asks first, and deleting the open workflow does not bring it back",
   expect(idFrom(page)).not.toBe(doomed.id);
 });
 
+test("a failed delete shows an error and a later edit still saves across switch and reload", async ({ page, request }) => {
+  const created = await createWorkflow(request, stamp("Keep"));
+  const other = await createWorkflow(request, stamp("Other"));
+  await openWorkflow(page, created.id);
+  await page.route(`**/api/workflows/${created.id}`, async (route) => {
+    if (route.request().method() === "DELETE") {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "http_error", message: "Delete failed with status 500." } }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: `Actions for ${created.title}` }).click();
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("Delete failed");
+  await expect(page).toHaveURL(new RegExp(`[?&]w=${created.id}`));
+  await expect(page.getByLabel("Workflow title")).toHaveValue(created.title);
+  expect((await request.get(`/api/workflows/${created.id}`)).status()).toBe(200);
+
+  const edited = `${created.title} kept`;
+  await page.getByLabel("Workflow title").fill(edited);
+  await settleEdit(page);
+  expect((await stored(request, created.id)).title).toBe(edited);
+
+  await (await row(page, other.title)).click();
+  await expect(page.getByLabel("Workflow title")).toHaveValue(other.title);
+  await page.reload();
+  await (await row(page, edited)).click();
+  await expect(page.getByLabel("Workflow title")).toHaveValue(edited);
+  expect((await stored(request, created.id)).title).toBe(edited);
+});
+
 test("drag order and Move to survive reload", async ({ page, request }) => {
   const project = await createProject(request, stamp("Folder"));
   const other = await createProject(request, stamp("Other"));

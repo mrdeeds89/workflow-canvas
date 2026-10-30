@@ -129,8 +129,12 @@ export type EditorHandle = {
   settle(): Promise<boolean>;
   /** Rename the open workflow through the editor, so its revision stays in step. */
   rename(title: string): void;
-  /** Drop unsaved edits. Used when this workflow is being deleted. */
+  /** Drop unsaved edits. Call only after this workflow has been deleted. */
   discard(): void;
+  /** Pause writes while a delete of this workflow is attempted. Does not drop edits. */
+  holdWrites(): void;
+  /** Resume writes after that delete failed, including an edit already pending. */
+  releaseWrites(): void;
 };
 
 type EditorProps = {
@@ -168,6 +172,8 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const dirty = useRef(false);
   // Set when this workflow is deleted, so a late save cannot write it back.
   const retired = useRef(false);
+  // Set only while a delete is in flight. A failed delete clears this and saves again.
+  const holding = useRef(false);
   // Kept beside React state so a save that finishes mid-edit still sends the
   // revision the server just stored, not the one from the previous render.
   const revision = useRef(0);
@@ -244,7 +250,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
    * down server. Returns false when the latest attempt failed.
    */
   const flush = useCallback(async (): Promise<boolean> => {
-    if (blocked.current || retired.current) return false;
+    if (blocked.current || retired.current || holding.current) return false;
     if (saving.current) {
       pending.current = true;
       return inflight.current ?? Promise.resolve(false);
@@ -253,7 +259,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     saving.current = true;
     const run = (async (): Promise<boolean> => {
       try {
-        while (!blocked.current && !retired.current) {
+        while (!blocked.current && !retired.current && !holding.current) {
           if (!dirty.current && !pending.current) return true;
           pending.current = false;
           const { meta: currentMeta, nodes: currentNodes, edges: currentEdges } = latest.current;
@@ -296,11 +302,17 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
             }
             // A newer edit arrived during this failed write. Send that once.
             // The same failed body must not be retried here.
-            if (pending.current && !blocked.current && !retired.current) {
+            if (pending.current && !blocked.current && !retired.current && !holding.current) {
               setSave({ kind: "dirty" });
               continue;
             }
             return false;
+          }
+          // The write already landed. Do not send the next one until delete settles.
+          if (holding.current) {
+            if (dirty.current || pending.current) setSave({ kind: "dirty" });
+            else setSave({ kind: "saved" });
+            return !(dirty.current || pending.current);
           }
           if (dirty.current || pending.current) {
             setSave({ kind: "dirty" });
@@ -333,7 +345,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   // workflow must not be written back by this.
   useEffect(
     () => () => {
-      if (dirty.current && !blocked.current && !retired.current) void flush();
+      if (dirty.current && !blocked.current && !retired.current && !holding.current) void flush();
     },
     [flush],
   );
@@ -343,19 +355,19 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     () => ({
       async settle(): Promise<boolean> {
         if (retired.current) return true;
-        if (blocked.current) return false;
+        if (blocked.current || holding.current) return false;
         await loadDone.current;
         if (retired.current) return true;
-        if (blocked.current) return false;
+        if (blocked.current || holding.current) return false;
         // Include an edit that lands while the previous write is still open.
         // False means the write failed: the shell must stay here so the error
         // remains visible and a late unmount write cannot race a reload.
-        while (!retired.current && !blocked.current && (dirty.current || saving.current || pending.current)) {
+        while (!retired.current && !blocked.current && !holding.current && (dirty.current || saving.current || pending.current)) {
           if (!latest.current.meta) return false;
           const saved = await flush();
           if (!saved) return false;
         }
-        return !blocked.current;
+        return !blocked.current && !holding.current;
       },
       rename(title: string) {
         if (!latest.current.meta) {
@@ -366,8 +378,17 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         latest.current.meta = { ...latest.current.meta, title };
         markDirty();
       },
+      holdWrites() {
+        holding.current = true;
+      },
+      releaseWrites() {
+        holding.current = false;
+        if (retired.current || blocked.current || saving.current) return;
+        if (dirty.current || pending.current) void flush();
+      },
       discard() {
         retired.current = true;
+        holding.current = false;
         dirty.current = false;
         pending.current = false;
       },

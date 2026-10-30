@@ -166,7 +166,7 @@ Limits: Chromium desktop only; no Firefox/WebKit/mobile/screen-reader/forced-col
 
 Repeatable Chromium checks live in `test/editor-browser/editor.spec.mjs`. Rerun on the project VM with `bash scripts/editor-browser.sh`. That script builds into `dist/editor-browser`, starts a throwaway loopback service on `127.0.0.1:18788` with a temporary database, runs the suite, restarts that service, and checks the same database. It does not use `wc-preview` or its volume. The published port is asserted loopback-only. The container is removed on exit.
 
-A failed save stays on screen until Retry, a later edit, or a successful leave. It is not retried in a loop, and a failed leave does not switch away, so a late write cannot race the next open. A rename that arrives while the workflow is still loading is kept, and that first load still paints the canvas. Switching waits for the write already in flight, including an edit that arrives during that write. Deleting the open workflow drops unsaved edits first.
+A failed save stays on screen until Retry, a later edit, or a successful leave. It is not retried in a loop, and a failed leave does not switch away, so a late write cannot race the next open. A rename that arrives while the workflow is still loading is kept, and that first load still paints the canvas. Switching waits for the write already in flight, including an edit that arrives during that write. Deleting the open workflow holds writes during the attempt and drops unsaved edits only after the delete succeeds, so a failed delete stays on that workflow and can still save. A refused browser-back switch can leave the address on the workflow that was not opened; that URL mismatch is a separate follow-up, not part of this delete fix.
 
 Historical, for the failed-save commit `638634d`, on the pinned image `node:22-bookworm@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd`, Chromium from `mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea`: typecheck passed, Node tests 80 pass / 0 fail. Browser suite: 17 passed, and the throwaway restart check passed. Two of those tests lock the review findings: a failed save does not switch away, and a rename during load still opens the canvas. Not covered: Firefox, WebKit, mobile, dragging a workflow onto another project, and deleting an arrow from the panel.
 
@@ -183,6 +183,16 @@ Isolated `git archive` of `638634d` on 2026-10-30, same pinned Node image. Not a
 
 This documentation commit does not change application code. Firefox, WebKit, mobile, dragging a workflow onto another project, and deleting an arrow from the panel remain uncovered. `scripts/smoke-api.sh` was not re-run.
 
+## Failed delete
+
+A delete that fails no longer retires the open editor. Writes are held only while that delete is in flight. Unsaved edits are dropped only after the delete succeeds, and only then does the shell select another workflow. A failed delete shows the error and stays on the same workflow. A later edit still saves, and switching or reloading keeps it.
+
+The refused browser-back URL mismatch is unchanged.
+
+Before the fix, on an isolated export of `d5c70f4` plus the new test only, that Chromium test failed: the error was visible, the workflow stayed open, and the later edit never reached "All changes saved". After the fix, same pinned Node image, isolated export, not the live preview: `npm ci --ignore-scripts` added 53 packages and reported 0 vulnerabilities; typecheck passed; Node tests 80 pass / 0 fail; `npm run build` succeeded (182 modules, inside the export). `bash scripts/editor-browser.sh`: 18 passed, throwaway port `127.0.0.1:18788` was loopback-only, the service answered after restart, and 1 restart check passed. Exported source hashes were unchanged. The theme suite was not re-run. `scripts/smoke-api.sh` was not re-run. The live preview was not rebuilt or restarted.
+
+The roadmap again says the primary audience is Hermes users first, step 5 is a Read-only Hermes adapter, and the first mapped example is still an open choice: a read-only market observer with existing-output inspection and offline replay first, or a non-financial example. That does not choose the mapping example. The non-financial execution pilot is unchanged. No job name or private source is in the document.
+
 ## Next action
 
-Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run, then the access token and Compose hosting. A checkout does not update a running preview: that service serves `dist/web`, and this documentation change does not rebuild it. Do not add execution, skill import, a deployment workflow, or a non-loopback bind. Publishing the source is not a deployment.
+Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run, then the access token and Compose hosting. The live preview still serves the previous `dist/web`; this commit does not rebuild or restart it. Do not add execution, skill import, a deployment workflow, or a non-loopback bind. Publishing the source is not a deployment. The refused browser-back URL mismatch remains a follow-up.
