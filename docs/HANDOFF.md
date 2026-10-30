@@ -6,7 +6,7 @@ Workflow Canvas is a design-only editor. This document describes the committed p
 
 What exists:
 
-- Schema 2 graph model, validation, and in-memory migration from schema 1 in `src/graph/`. The stored row is rewritten only when the client saves.
+- Schema 3 graph model, validation, and in-memory migration from schema 1 and 2 in `src/graph/`. The stored row is rewritten only when the client saves. Schema 3 adds a workflow-level plain-text `brief`.
 - SQLite create/save/reload via `node:sqlite` (experimental in Node 22.23.4). Stale revisions and invalid graphs do not change the stored row.
 - Design-time HTTP API in `src/http/` on `node:http` only: `GET /api/health`, `POST /api/workflows`, `GET /api/workflows/:id`, `PUT /api/workflows/:id`. No execution route and no authentication.
 - Canvas UI: React 19.3.1 and `@xyflow/react` 12.12.0, built by Vite 8.3.5 from `web/` into gitignored `dist/web`. The service serves that build for non-`/api` paths with `script-src 'self'`, `nosniff`, `no-referrer`, traversal refusal, and an `index.html` fallback. Without a build the service stays API-only.
@@ -52,7 +52,7 @@ Other statuses: `422` invalid graph (with issues), `415` non-JSON, `413` body ov
 
 ## Canvas behaviour
 
-Toolbar adds a card, renames the workflow, and shows save state. Autosave is 600 ms after a change, one save in flight, server-derived readiness written back, `409` stops autosave, `422` shows the first issue. The browser runs the shared `validateWorkflow` before adding an arrow. IDs use `crypto.getRandomValues` because `randomUUID` is unavailable on plain-http pages.
+Toolbar adds a card, opens the workflow brief, renames the workflow, and shows save state. Autosave is 600 ms after a change, one save in flight, server-derived readiness written back, `409` stops autosave, `422` shows the first issue. The browser runs the shared `validateWorkflow` before adding an arrow. IDs use `crypto.getRandomValues` because `randomUUID` is unavailable on plain-http pages.
 
 Chosen look: light theme and the current card design.
 
@@ -123,9 +123,21 @@ GitHub Actions run https://github.com/mrdeeds89/workflow-canvas/actions/runs/410
 - No Docker Compose file. The smoke script runs an ad-hoc container.
 - No automated browser test in the repo.
 
+## Workflow brief
+
+Schema 3 field `brief` is one plain-text string on the workflow document. Suggested headings are a writing convention, not fields: Purpose, Inputs required, Expected outputs, Success criteria, Limits, Open questions. The editor opens one text box from **Workflow brief** in the toolbar (open by default). The placeholder and hint show those headings. The server stores and returns the string as written. It does not trim, parse headings, or execute the text. The editor renders it as a text-box value, never as HTML.
+
+Schema 1 and 2 load in memory as schema 3 with `brief: ""` when the stored value is missing or not text. That empty string is absence, not a generated template. Migration does not insert the suggested headings. A string already stored is kept character for character. The stored row is not rewritten until the next save. A non-string brief, or one over 20,000 characters, is `422` and does not change the stored row. A stale revision is `409` and does not change the stored brief.
+
+Read contract for a future assistant, with no integration built: `docs/ARCHITECTURE.md`, section "Workflow brief read contract". `GET /api/workflows/:id` returns `brief` as inert text. This increment does not execute, propose, or write on an agent's behalf. There is no agent route.
+
+Verified on the project VM against an exact index export of this increment, not the mixed working tree. Image `node:22-bookworm@sha256:18a6d90fd60542269850c80ca03b29b1d9b14d6b221ac7ee8e35b0d33ef904bd`. `npm ci --ignore-scripts` installed 53 packages and reported 0 vulnerabilities. Typecheck passed. Node tests **80 pass / 0 fail**, including eight in `test/brief.test.ts`. `npm run build` succeeded. The live preview on `127.0.0.1:8787` was not rebuilt or restarted.
+
+Throwaway Chromium check, no published port, temporary database, built UI from that export: the text box showed the suggested headings as placeholder; the pointer landed in `textarea.brief__input` (`elementFromPoint`); Backspace in the box did not delete the note card; autosave reached "All changes saved"; `GET` returned the typed text exactly, including `<script>alert(1)</script>`, at revision 2, schema 3. Reload showed the same text. After the throwaway service was stopped, the same brief was still in the database. After that service was started again, the same URL and `GET` still returned that brief, revision 2, and the text box matched. That check is not a committed browser suite. `docs/ROADMAP.md` is not part of this increment and stays untracked.
+
 ## Next action
 
-Collect Dom's hands-on feedback on the details panel and the sidebar. Then trigger design (saved, not run), then the access token and Compose hosting. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.
+Collect Dom's hands-on feedback on the details panel, the sidebar, and the workflow brief. Then trigger design (saved, not run), then the access token and Compose hosting. Do not add execution, skill import, a deployment workflow, or a non-loopback bind.
 
 ## Theme increment — isolated snapshot verification
 

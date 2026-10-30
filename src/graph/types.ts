@@ -1,7 +1,23 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Versions this build can read. Older ones are migrated forward on load. */
-export const READABLE_SCHEMA_VERSIONS = [1, 2] as const;
+export const READABLE_SCHEMA_VERSIONS = [1, 2, 3] as const;
+
+/** Workflow brief length. Same bound as other stored prose fields. */
+export const MAX_BRIEF_LENGTH = 20_000;
+
+/**
+ * Suggested headings for a workflow brief. A writing convention only: the
+ * server stores one string and does not require, parse, or invent these.
+ */
+export const BRIEF_HEADINGS = [
+  "Purpose",
+  "Inputs required",
+  "Expected outputs",
+  "Success criteria",
+  "Limits",
+  "Open questions",
+] as const;
 
 export type Owner = "human" | "agent" | "unassigned";
 
@@ -109,6 +125,12 @@ export type WorkflowDefinition = {
   id: string;
   title: string;
   description: string;
+  /**
+   * Workflow-level plain text for people and for a later assistant.
+   * Stored and returned verbatim. Not HTML, not a command, and not authority
+   * to run anything. See the workflow brief read contract in docs/ARCHITECTURE.md.
+   */
+  brief: string;
   revision: number;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];

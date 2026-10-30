@@ -1,6 +1,7 @@
 import {
   DESIGN_TIME_READINESS,
   RUN_EVIDENCE_READINESS,
+  MAX_BRIEF_LENGTH,
   SCHEMA_VERSION,
   deriveReadiness,
   type EdgeKind,
@@ -96,6 +97,16 @@ export function validateWorkflow(input: unknown): ValidationResult {
   if (!isText(input.description, 20_000)) {
     issues.push(issue("invalid_workflow", "description", "Workflow description must be text."));
   }
+  // Copied through unchanged. Headings are not parsed, and markup is not executed.
+  if (!isText(input.brief, MAX_BRIEF_LENGTH)) {
+    issues.push(
+      issue(
+        "invalid_workflow",
+        "brief",
+        `Workflow brief must be text up to ${MAX_BRIEF_LENGTH} characters.`,
+      ),
+    );
+  }
   if (!Number.isInteger(input.revision) || (input.revision as number) < 1) {
     issues.push(issue("invalid_workflow", "revision", "Revision must be an integer of 1 or greater."));
   }
@@ -121,6 +132,7 @@ export function validateWorkflow(input: unknown): ValidationResult {
       id,
       title: input.title as string,
       description: input.description as string,
+      brief: input.brief as string,
       revision: input.revision as number,
       nodes,
       edges,

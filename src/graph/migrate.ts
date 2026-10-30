@@ -63,8 +63,24 @@ function migrateV1ToV2(document: Record<string, unknown>): Record<string, unknow
   };
 }
 
+/**
+ * v2 -> v3
+ *
+ * Adds `brief`. A missing or non-text brief becomes an empty string: that is
+ * absence, not a template. Migration must not insert the suggested headings.
+ * A string already stored is kept character for character.
+ */
+function migrateV2ToV3(document: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...document,
+    schemaVersion: 3,
+    brief: typeof document.brief === "string" ? document.brief : "",
+  };
+}
+
 const MIGRATIONS: Record<number, (document: Record<string, unknown>) => Record<string, unknown>> = {
   1: migrateV1ToV2,
+  2: migrateV2ToV3,
 };
 
 /** Bring a stored document up to SCHEMA_VERSION, one step at a time. */

@@ -132,7 +132,7 @@ test("upgrades a database created before projects, keeping workflows as Unfiled"
     const insert = old.prepare("INSERT INTO workflows (id, revision, document) VALUES (?, ?, ?)");
     for (const [id, title] of [["w1", "First"], ["w2", "Second"]] as const) {
       const doc = {
-        schemaVersion: SCHEMA_VERSION, id, title, description: "", revision: 3,
+        schemaVersion: SCHEMA_VERSION, id, title, description: "", brief: "", revision: 3,
         nodes: [], edges: [], groups: [], sourceReferences: [],
       };
       insert.run(id, 3, JSON.stringify(doc));

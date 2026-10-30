@@ -11,6 +11,7 @@ Licensed under the [MIT License](LICENSE). Copyright (c) 2026 DomP.
 - Add any of six card types: task, agent, integration, approval, artifact, note. New cards start as `proposed`.
 - See type, a readiness pill, agent/you ownership columns, and setup progress `n/m` on each card.
 - Drag cards, draw a `requires` arrow from the right handle to the left handle, and delete the selection with Delete or Backspace.
+- Write a workflow brief from the toolbar: one plain-text box. Suggested headings are Purpose, Inputs required, Expected outputs, Success criteria, Limits, and Open questions. The text is saved as written and never runs anything.
 - Rename the workflow from the toolbar. A bare visit creates a workflow and puts `?w=<id>` in the address; that URL is how you return.
 - Autosave about 600 ms after a change. The server derives `configured` / `not_configured` and writes that back onto the cards.
 - Dependency cycles are refused before they are drawn. A conflicting save (`409`) stops autosave and asks for a reload.
@@ -79,7 +80,7 @@ The process inside the container listens on all of its own interfaces so the pub
 | `WORKFLOW_CANVAS_ALLOWED_ORIGINS` | empty (deny browser origins) | Comma-separated exact origins. |
 | `WORKFLOW_CANVAS_STATIC` | `dist/web` | Built UI. Without `index.html` the service stays API-only. |
 
-API routes: `GET /api/health`, `POST /api/workflows`, `GET /api/workflows/:id`, `PUT /api/workflows/:id`. No execution route. A save sends back the revision it loaded; the server stores the next revision and returns `409` on a stale write.
+API routes: `GET /api/health`, `POST /api/workflows`, `GET /api/workflows/:id`, `PUT /api/workflows/:id`. No execution route and no agent route. A save sends back the revision it loaded; the server stores the next revision and returns `409` on a stale write. The document field `brief` is plain text, stored and returned verbatim. The read contract for a future assistant is in `docs/ARCHITECTURE.md`.
 
 ## Checks
 

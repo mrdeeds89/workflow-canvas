@@ -1,13 +1,15 @@
 # Architecture proposal
 
-Status: partially implemented. Schema 2, validation, SQLite persistence, the design-time HTTP API, and the canvas UI exist. Docker Compose, authentication, the card details panel, a workflow list, import/export routes, and execution do not.
+Status: partially implemented. Schema 3, validation, SQLite persistence, the design-time HTTP API, the canvas, a card details panel, and a workflow sidebar exist. Docker Compose, authentication, import/export routes, and execution do not.
 
 ## Deployment
 Browser client → application HTTP service → SQLite and persistent data volume.
 Frontend is built and served with the application. Docker Compose is the intended portable distribution boundary and is not packaged yet. Keep host addresses and deployment secrets outside repository defaults.
 
 ## Graph model
-Versioned WorkflowDefinition (schema 2): id, title, description, revision, nodes, edges, groups, sourceReferences.
+Versioned WorkflowDefinition (schema 3): id, title, description, brief, revision, nodes, edges, groups, sourceReferences.
+
+`brief` is one plain-text string for the whole workflow. It is not a parsed form. Suggested headings are a writing convention only.
 
 A node is a card. It carries a stable id, position, one of six card types (task, agent, integration, approval, artifact, note), a human/agent/unassigned owner, instructions, a JSON `spec` stored as inert text, acceptance criteria, and inputs/outputs.
 
@@ -27,6 +29,18 @@ Validate on the server. Use SQLite transactions and optimistic revision checks. 
 
 ## Security posture
 Private single-user first, not Internet-ready. Verify request origins and rendering safety; private networking is not a substitute for validation. Never interpret imported text, labels, or expressions as code. No execution API in first milestones. Add authentication and authorization before remote/public or multi-user exposure. Cloudflare and Supabase are not needed for initial deployment.
+
+## Workflow brief read contract
+
+This is the read contract for a future assistant. It is not an integration. There is no agent route, no MCP tool, and no write-back in this increment.
+
+- **Read.** `GET /api/workflows/:id` returns the workflow document. `brief` is the workflow-level plain-text note. A future assistant reads that field from that response, or from the same document the editor saves. Do not scrape the page.
+- **Meaning.** Human-authored notes for people and for a later assistant. Inert data. Not instructions to this application. Not HTML. Not a shell command. Not authorization to run a tool, job, schedule, or trade.
+- **Verbatim.** The server stores and returns the string exactly as saved, including whitespace and characters that look like markup or code. It does not trim, parse headings, or execute the text. The editor renders it as a text-box value, never as HTML.
+- **Suggested headings** are a writing convention, not a schema: Purpose, Inputs required, Expected outputs, Success criteria, Limits, Open questions. Missing headings are allowed. The server does not split `brief` into those fields. An empty string means no brief has been written.
+- **Older documents.** Schema 1 and 2 load as schema 3 with `brief` set to `""` when the stored value is missing or not text. That empty string is absence, not a generated template. The stored row is not rewritten until the client saves. A string already present is kept character for character.
+- **Write.** `PUT /api/workflows/:id` uses the existing revision rule. The body includes `brief`. A non-string, or a brief over 20,000 characters, is `422` and does not change the stored row. A stale revision is `409` and does not change the stored brief.
+- **Out of scope.** Agent suggestions, proposal diffs, card-level briefs, execution, and treating the brief as a job spec.
 
 ## UI
 Canvas is the primary surface; details panel and source viewer are secondary. Pan/zoom, labelled arrows, distinct gate nodes, clear ownership and collapsible groups. Avoid reducing the product to Kanban columns. Editing a map and executing a workflow are separate actions and modes.

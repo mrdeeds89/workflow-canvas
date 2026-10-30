@@ -30,6 +30,7 @@ import { validateWorkflow } from "../../src/graph/validate.ts";
 import { ApiError, loadWorkflow, saveWorkflow } from "./api.ts";
 import { CardNode, type CardFlowNode } from "./CardNode.tsx";
 import { CARD_KINDS, EDGE_LABEL, makeId, newCard } from "./cards.ts";
+import { BriefPanel } from "./BriefPanel.tsx";
 import { CardDetails, EdgeDetails } from "./DetailsPanel.tsx";
 
 type Meta = Omit<WorkflowDefinition, "nodes" | "edges">;
@@ -153,6 +154,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const [save, setSave] = useState<SaveState>({ kind: "saved" });
   const [notice, setNotice] = useState<string | null>(null);
   const [changeCount, setChangeCount] = useState(0);
+  const [briefOpen, setBriefOpen] = useState(true);
   const flow = useReactFlow();
 
   // Saves read the newest canvas through this ref, not a stale closure.
@@ -401,6 +403,12 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     markDirty();
   };
 
+  const setBrief = (brief: string) => {
+    setMeta((previous) => (previous ? { ...previous, brief } : previous));
+    if (latest.current.meta) latest.current.meta = { ...latest.current.meta, brief };
+    markDirty();
+  };
+
   if (loadError) {
     return (
       <div className="screen-message">
@@ -430,6 +438,14 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
           maxLength={500}
           onChange={(event) => renameWorkflow(event.target.value)}
         />
+        <button
+          type="button"
+          className="brief-toggle"
+          aria-expanded={briefOpen}
+          onClick={() => setBriefOpen((open) => !open)}
+        >
+          Workflow brief
+        </button>
         <div className="add-group" role="group" aria-label="Add a card">
           <span className="add-group__label">Add</span>
           {CARD_KINDS.map(({ kind, label, hint }) => (
@@ -440,6 +456,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         </div>
         <SaveIndicator state={save} onRetry={() => void flush()} />
       </header>
+      {briefOpen && <BriefPanel value={meta.brief} onChange={setBrief} onClose={() => setBriefOpen(false)} />}
 
       {save.kind === "conflict" && (
         <div className="banner banner--warn" role="alert">

@@ -141,6 +141,7 @@ export function openStore(path: string): WorkflowStore {
         id: randomUUID(),
         title: input.title,
         description: input.description ?? "",
+        brief: "",
         revision: 1,
         nodes: [],
         edges: [],

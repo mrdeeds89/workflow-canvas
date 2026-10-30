@@ -36,6 +36,7 @@ export function emptyWorkflow(overrides: Record<string, unknown> = {}) {
     id: "wf-1",
     title: "Draft",
     description: "",
+    brief: "",
     revision: 1,
     nodes: [],
     edges: [],
