@@ -8,7 +8,7 @@ Create the standalone repository, requirements, architecture proposal, privacy b
 Acceptance: documents exist; Git repository validates; private operator notes and data stay ignored.
 
 ## Milestone 1 — usable visual editor
-Status: partial. Schema, validation, SQLite save/reload, a design-time HTTP API, and a first canvas exist and are tested. Still open: a card details panel, drawing labelled non-requires arrows, import/export routes, list/rename/delete, Compose packaging, and an automated browser suite.
+Status: partial. In the committed editor: schema, validation, SQLite save/reload, the design-time HTTP API, the canvas, a card and arrow details panel, labelled arrow editing after connect, a project sidebar (list, rename, move, duplicate, delete), a workflow brief, Light / Dark / system themes, and two Chromium suites. Still open: JSON import/export routes, drawing a new arrow as a non-`requires` kind, undo, Compose packaging, authentication, and a clean-host install test.
 Proposed stack, now in use for the slice above: TypeScript + React + React Flow frontend, a small TypeScript HTTP backend, and SQLite.
 1. Define versioned graph schema and fixtures: workflow, node, edge, group, source reference.
 2. Build canvas: create, move, select, edit, delete, connect; pan/zoom and fit view.

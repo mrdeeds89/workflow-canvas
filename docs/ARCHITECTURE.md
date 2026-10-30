@@ -1,6 +1,6 @@
 # Architecture proposal
 
-Status: partially implemented. Schema 3, validation, SQLite persistence, the design-time HTTP API, the canvas, a card details panel, and a workflow sidebar exist. Docker Compose, authentication, import/export routes, and execution do not.
+Status: partially implemented. Schema 3, validation, SQLite persistence, the design-time HTTP API, the canvas, a card and arrow details panel, a workflow sidebar, a plain-text brief, and Light / Dark / system themes exist. Docker Compose, authentication, import/export routes, and execution do not.
 
 ## Deployment
 Browser client → application HTTP service → SQLite and persistent data volume.
@@ -26,6 +26,8 @@ WorkflowRun is a future separate entity. Design checklist completion must never 
 
 ## Storage and API
 Validate on the server. Use SQLite transactions and optimistic revision checks. Reject oversized payloads, dangling references, duplicate IDs and unsupported schema versions. Enforce graph semantics per edge type rather than globally forbidding explanatory revision arrows. Export portable JSON without host-specific absolute paths or secrets. Choose migration/backup strategy before data becomes valuable.
+
+Implemented routes: `GET /api/health`, `GET /api/library`, `POST /api/projects`, `PATCH /api/projects/:id`, `POST /api/workflows`, `GET` / `PUT` / `DELETE /api/workflows/:id`, `POST /api/workflows/:id/move`, and `POST /api/workflows/:id/duplicate`. There is no import, export, or execution route. Library membership and order live beside the document, so moving or reordering does not change a workflow revision.
 
 ## Security posture
 Private single-user first, not Internet-ready. Verify request origins and rendering safety; private networking is not a substitute for validation. Never interpret imported text, labels, or expressions as code. No execution API in first milestones. Add authentication and authorization before remote/public or multi-user exposure. Cloudflare and Supabase are not needed for initial deployment.
