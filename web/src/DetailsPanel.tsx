@@ -1,8 +1,19 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { EdgeKind, NodeKind, SetupTask, WorkflowEdge, WorkflowNode } from "../../src/graph/types.ts";
+import {
+  EXECUTOR_PATTERN,
+  MAX_RUNTIME_MINUTES,
+  MAX_SKILLS,
+  isSkillName,
+  type EdgeKind,
+  type NodeKind,
+  type RunSettings,
+  type SetupTask,
+  type WorkflowEdge,
+  type WorkflowNode,
+} from "../../src/graph/types.ts";
 // The same link rule the server enforces, so the panel and server agree.
 import { isSafeLink } from "../../src/graph/validate.ts";
-import { CARD_KINDS, EDGE_LABEL, READINESS_LABEL, makeId } from "./cards.ts";
+import { CARD_KINDS, EDGE_LABEL, READINESS_LABEL, makeId, runsAsStep } from "./cards.ts";
 
 const EDGE_KINDS: readonly { kind: EdgeKind; hint: string }[] = [
   { kind: "requires", hint: "The next step waits for this one to finish." },
@@ -27,6 +38,10 @@ export function CardDetails({ card, onChange, onDelete, onClose }: CardDetailsPr
   return (
     <aside className="details" aria-label="Card details">
       <PanelHeader title="Card" onClose={onClose} />
+
+      {card.inferred && (
+        <InferredNotice what="card" onConfirm={() => set({ inferred: false })} />
+      )}
 
       <Field label="Name">
         <input
@@ -85,6 +100,10 @@ export function CardDetails({ card, onChange, onDelete, onClose }: CardDetailsPr
         </>
       )}
 
+      {runsAsStep(card.type) && (
+        <RunSection key={card.id} run={card.run} onChange={(run) => onChange((c) => ({ ...c, run }))} />
+      )}
+
       <div className="details__footer">
         <button type="button" className="btn btn--danger" onClick={onDelete}>
           Delete card
@@ -123,6 +142,84 @@ function StatusSection({ card, onChange }: Pick<CardDetailsProps, "card" | "onCh
           ? "Configured turns on by itself when every setup check is ticked, and off again if one is unticked."
           : "Proposed means drafted but not yet approved. Approving it lets the setup checklist decide when it is configured."}
       </p>
+    </Section>
+  );
+}
+
+// --------------------------------------------------------- run settings
+
+/**
+ * Who would do this step if a run is requested. Names only: nothing here
+ * runs, and a Hermes-side conductor checks the names against its own list.
+ * Each field keeps a local draft and is written to the card only when valid,
+ * so a half-typed name never blocks saving.
+ */
+function RunSection({ run, onChange }: { run: RunSettings; onChange: (run: RunSettings) => void }) {
+  const [executor, setExecutor] = useState(run.executor);
+  const [skills, setSkills] = useState(run.skills.join("\n"));
+  const [minutes, setMinutes] = useState(String(run.maxRuntimeMinutes));
+
+  const executorOk = executor.trim() === "" || EXECUTOR_PATTERN.test(executor.trim());
+  const skillLines = skills.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+  const skillsOk = skillLines.length <= MAX_SKILLS && skillLines.every(isSkillName);
+  const minutesValue = Number(minutes);
+  const minutesOk = Number.isInteger(minutesValue) && minutesValue >= 1 && minutesValue <= MAX_RUNTIME_MINUTES;
+
+  return (
+    <Section title="If this runs">
+      <p className="hint">Names only. Nothing runs from the canvas; a run request is checked before anything is handed to Hermes.</p>
+      <Field label="Done by (Hermes profile)">
+        <input
+          className={`input${executorOk ? "" : " input--bad"}`}
+          value={executor}
+          maxLength={64}
+          placeholder="e.g. writer"
+          aria-invalid={!executorOk}
+          spellCheck={false}
+          onChange={(event) => {
+            setExecutor(event.target.value);
+            const next = event.target.value.trim();
+            if ((next === "" || EXECUTOR_PATTERN.test(next)) && next !== run.executor) onChange({ ...run, executor: next });
+          }}
+        />
+        {!executorOk && <p className="field-error">Lowercase letters, digits, - and _ only. Not saved until fixed.</p>}
+      </Field>
+      <Field label="Skills to load (one per line)">
+        <textarea
+          className={`input input--area${skillsOk ? "" : " input--bad"}`}
+          value={skills}
+          rows={2}
+          placeholder="e.g. research/daily-digest"
+          aria-invalid={!skillsOk}
+          spellCheck={false}
+          onChange={(event) => {
+            setSkills(event.target.value);
+            const lines = event.target.value.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+            if (lines.length <= MAX_SKILLS && lines.every(isSkillName) && lines.join("\n") !== run.skills.join("\n")) {
+              onChange({ ...run, skills: lines });
+            }
+          }}
+        />
+        {!skillsOk && <p className="field-error">Skill names use lowercase letters, digits, . - _ and / for a category. Not saved until fixed.</p>}
+      </Field>
+      <Field label="Time limit per attempt (minutes)">
+        <input
+          className={`input input--short${minutesOk ? "" : " input--bad"}`}
+          type="number"
+          min={1}
+          max={MAX_RUNTIME_MINUTES}
+          value={minutes}
+          aria-invalid={!minutesOk}
+          onChange={(event) => {
+            setMinutes(event.target.value);
+            const value = Number(event.target.value);
+            if (Number.isInteger(value) && value >= 1 && value <= MAX_RUNTIME_MINUTES && value !== run.maxRuntimeMinutes) {
+              onChange({ ...run, maxRuntimeMinutes: value });
+            }
+          }}
+        />
+        {!minutesOk && <p className="field-error">A whole number from 1 to {MAX_RUNTIME_MINUTES}. Not saved until fixed.</p>}
+      </Field>
     </Section>
   );
 }
@@ -312,6 +409,7 @@ export function EdgeDetails({ edge, sourceTitle, targetTitle, onChange, onDelete
       <p className="details__route">
         <strong>{sourceTitle || "Untitled step"}</strong> → <strong>{targetTitle || "Untitled step"}</strong>
       </p>
+      {edge.inferred && <InferredNotice what="arrow" onConfirm={() => onChange({ ...edge, inferred: false })} />}
 
       <div className="field">
         <span className="field__label">Kind</span>
@@ -366,6 +464,21 @@ export function EdgeDetails({ edge, sourceTitle, targetTitle, onChange, onDelete
 }
 
 // -------------------------------------------------------------- pieces
+
+/** Inferred means an agent or importer drew this, not a person. Confirming is a human step. */
+function InferredNotice({ what, onConfirm }: { what: "card" | "arrow"; onConfirm: () => void }) {
+  return (
+    <div className="inferred-notice" role="note">
+      <p>
+        <strong>Inferred.</strong> This {what} was drawn from a source by an agent, not by you. Check it against the
+        source, then confirm. A run will not use it until you do.
+      </p>
+      <button type="button" className="btn btn--primary" onClick={onConfirm}>
+        Confirm this {what}
+      </button>
+    </div>
+  );
+}
 
 function PanelHeader({ title, onClose }: { title: string; onClose: () => void }) {
   return (

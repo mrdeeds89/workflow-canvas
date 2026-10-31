@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION } from "./types.ts";
+import { SCHEMA_VERSION, defaultRunSettings } from "./types.ts";
 
 /**
  * Forward migration for stored workflow documents.
@@ -78,9 +78,26 @@ function migrateV2ToV3(document: Record<string, unknown>): Record<string, unknow
   };
 }
 
+/**
+ * v3 -> v4
+ *
+ * Adds per-card run settings with nothing chosen: no executor, no skills, the
+ * default time limit. Migration never picks a profile, because choosing who
+ * does a step is a human decision.
+ */
+function migrateV3ToV4(document: Record<string, unknown>): Record<string, unknown> {
+  const nodes = Array.isArray(document.nodes) ? document.nodes : [];
+  return {
+    ...document,
+    schemaVersion: 4,
+    nodes: nodes.map((node) => (isRecord(node) ? { ...node, run: defaultRunSettings() } : node)),
+  };
+}
+
 const MIGRATIONS: Record<number, (document: Record<string, unknown>) => Record<string, unknown>> = {
   1: migrateV1ToV2,
   2: migrateV2ToV3,
+  3: migrateV3ToV4,
 };
 
 /** Bring a stored document up to SCHEMA_VERSION, one step at a time. */

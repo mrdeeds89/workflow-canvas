@@ -14,7 +14,7 @@ One scheduler. Hermes. Canvas never decides *when* anything runs and never start
 | Presentation | Canvas (Desktop plugin optional, later) | Renders definitions and observed evidence side by side, never merged |
 | Agent-assisted editing | Canvas, via revision-bound proposals | Accept/reject is a human action (milestone 3) |
 | Job scheduling (schedule, timezone, enabled/paused, next run) | Hermes cron | Read-only display of the harness's value |
-| Dispatch (claim, fire, retry, catch-up, at-most-once per occurrence) | Hermes cron | None. No run, trigger, or resume route |
+| Dispatch (claim, fire, retry, catch-up, at-most-once per occurrence) | Hermes (cron, and Kanban for workflow runs) | Records a person's run request and approvals only. A Hermes-side conductor pulls them and decides; Canvas holds no credential that starts work (decided 2026-10-31, `docs/RUN-PLAN.md`) |
 | Run evidence (attempts, status, delivery outcome) | Hermes execution ledger | Copies an allowlisted, timestamped observation; never edits it |
 | Credentials (model keys, platform tokens, dashboard login) | Hermes | Never held, proxied, or displayed |
 

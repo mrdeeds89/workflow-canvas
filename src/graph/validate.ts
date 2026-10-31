@@ -1,6 +1,10 @@
 import {
   DESIGN_TIME_READINESS,
+  EXECUTOR_PATTERN,
+  MAX_RUNTIME_MINUTES,
+  MAX_SKILLS,
   RUN_EVIDENCE_READINESS,
+  isSkillName,
   MAX_BRIEF_LENGTH,
   SCHEMA_VERSION,
   deriveReadiness,
@@ -10,6 +14,7 @@ import {
   type Port,
   type Proposal,
   type Readiness,
+  type RunSettings,
   type SetupTask,
   type SourceReference,
   type ValidationIssue,
@@ -199,9 +204,12 @@ function parseNode(value: unknown, path: string, issues: ValidationIssue[]): Wor
     issues,
   );
 
+  const run = parseRun(value.run, `${path}.run`, issues);
+
   if (
     spec === null ||
     readiness === null ||
+    !run ||
     !proposal ||
     !setup ||
     !inputs ||
@@ -229,7 +237,59 @@ function parseNode(value: unknown, path: string, issues: ValidationIssue[]): Wor
     outputs,
     acceptanceCriteria,
     inferred: value.inferred as boolean,
+    run,
   };
+}
+
+/**
+ * Run settings are names only. They are checked so they can later be passed
+ * to Hermes as single, shell-free arguments; they grant nothing by themselves.
+ */
+function parseRun(value: unknown, path: string, issues: ValidationIssue[]): RunSettings | null {
+  if (!isRecord(value) || typeof value.executor !== "string" || !Array.isArray(value.skills)) {
+    issues.push(issue("invalid_run_settings", path, "Run settings need an executor and a skills list."));
+    return null;
+  }
+  if (value.executor !== "" && !EXECUTOR_PATTERN.test(value.executor)) {
+    issues.push(
+      issue(
+        "invalid_executor",
+        `${path}.executor`,
+        "A Hermes profile name uses lowercase letters, digits, hyphens and underscores, up to 64 characters.",
+      ),
+    );
+    return null;
+  }
+  if (value.skills.length > MAX_SKILLS) {
+    issues.push(issue("invalid_skill", `${path}.skills`, `A card may load at most ${MAX_SKILLS} skills.`));
+    return null;
+  }
+  const skills: string[] = [];
+  for (const [index, skill] of value.skills.entries()) {
+    if (typeof skill !== "string" || !isSkillName(skill)) {
+      issues.push(
+        issue(
+          "invalid_skill",
+          `${path}.skills[${index}]`,
+          "A skill name uses lowercase letters, digits, dots, hyphens and underscores, with optional category/ prefixes.",
+        ),
+      );
+      return null;
+    }
+    skills.push(skill);
+  }
+  const minutes = value.maxRuntimeMinutes;
+  if (!Number.isInteger(minutes) || (minutes as number) < 1 || (minutes as number) > MAX_RUNTIME_MINUTES) {
+    issues.push(
+      issue(
+        "invalid_run_settings",
+        `${path}.maxRuntimeMinutes`,
+        `The time limit must be a whole number of minutes from 1 to ${MAX_RUNTIME_MINUTES}.`,
+      ),
+    );
+    return null;
+  }
+  return { executor: value.executor, skills, maxRuntimeMinutes: minutes as number };
 }
 
 /**

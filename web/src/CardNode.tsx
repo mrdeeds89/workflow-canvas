@@ -1,6 +1,6 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { setupProgress, type Readiness, type WorkflowNode } from "../../src/graph/types.ts";
-import { KIND_LABEL, READINESS_LABEL } from "./cards.ts";
+import { KIND_LABEL, READINESS_LABEL, runsAsStep } from "./cards.ts";
 
 export type CardData = { card: WorkflowNode };
 export type CardFlowNode = Node<CardData, "card">;
@@ -21,6 +21,7 @@ export function CardNode({ data, selected }: NodeProps<CardFlowNode>) {
       <Handle type="target" position={Position.Left} className="card__handle" />
       <header className="card__head">
         <span className="card__kind">{KIND_LABEL[card.type]}</span>
+        {card.inferred && <span className="card__inferred" title="Drawn by an agent from a source; not yet confirmed">Inferred</span>}
         <ReadinessPill readiness={card.readiness} />
       </header>
       <div className="card__title">{card.title.trim() === "" ? "Untitled step" : card.title}</div>
@@ -30,6 +31,15 @@ export function CardNode({ data, selected }: NodeProps<CardFlowNode>) {
         <div className="card__owners">
           <OwnerColumn heading="Agent owns" items={card.proposal.agentOwns} />
           <OwnerColumn heading="You own" items={card.proposal.youOwn} />
+        </div>
+      )}
+
+      {runsAsStep(card.type) && (
+        <div className="card__runner" title="Hermes profile that would do this step if a run is requested">
+          <span className="card__setup-label">Done by</span>
+          <span className={card.run.executor === "" ? "card__runner-none" : "card__runner-name"}>
+            {card.run.executor === "" ? "not chosen" : card.run.executor}
+          </span>
         </div>
       )}
 

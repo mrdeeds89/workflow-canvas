@@ -5,6 +5,7 @@ import { validateWorkflow } from "./validate.ts";
 import type { ValidationIssue, WorkflowDefinition } from "./types.ts";
 import { SCHEMA_VERSION } from "./types.ts";
 import { createHarnessStore, type HarnessStore } from "../harness/store.ts";
+import { createRunStore, type RunStore } from "./runs.ts";
 
 export type SaveResult =
   | { ok: true; value: WorkflowDefinition }
@@ -32,6 +33,8 @@ export type WorkflowStore = {
   duplicateWorkflow(id: string): WorkflowDefinition | null;
   /** Hermes job links and observations. Separate from documents and revisions. */
   harness: HarnessStore;
+  /** Run requests. Records only; nothing in Canvas executes them. */
+  runs: RunStore;
   close(): void;
 };
 
@@ -60,6 +63,7 @@ export function openStore(path: string): WorkflowStore {
   `);
   upgradeWorkflowsTable(db);
   const harness = createHarnessStore(db);
+  const runs = createRunStore(db);
 
   const insert = db.prepare(
     "INSERT INTO workflows (id, revision, document, project_id, position, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -242,6 +246,7 @@ export function openStore(path: string): WorkflowStore {
         removeWorkflow.run(id);
         removeHarnessLink.run(id);
         removeHarnessObservations.run(id);
+        runs.removeWorkflow(id);
         renumber(row.project_id, idsIn(row.project_id));
         return true;
       });
@@ -265,6 +270,7 @@ export function openStore(path: string): WorkflowStore {
     },
 
     harness,
+    runs,
 
     close() {
       db.close();

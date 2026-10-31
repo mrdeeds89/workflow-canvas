@@ -107,7 +107,8 @@ edited="$(jq '.nodes = [{
     done: true
   }],
   inputs: [], outputs: [], acceptanceCriteria: [],
-  inferred: false
+  inferred: false,
+  run: {executor: "", skills: [], maxRuntimeMinutes: 30}
 }]' <<<"$created")"
 
 saved="$(curl -sS -X PUT -H 'content-type: application/json' \

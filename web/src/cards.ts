@@ -1,4 +1,4 @@
-import type { EdgeKind, NodeKind, Readiness, WorkflowNode } from "../../src/graph/types.ts";
+import { defaultRunSettings, type EdgeKind, type NodeKind, type Readiness, type WorkflowNode } from "../../src/graph/types.ts";
 
 export const CARD_KINDS: readonly { kind: NodeKind; label: string; hint: string }[] = [
   { kind: "task", label: "Task", hint: "A step of work" },
@@ -56,5 +56,11 @@ export function newCard(kind: NodeKind, position: { x: number; y: number }): Wor
     outputs: [],
     acceptanceCriteria: [],
     inferred: false,
+    run: defaultRunSettings(),
   };
+}
+
+/** Card kinds a run hands to Hermes. Approval, artifact and note cards do not run. */
+export function runsAsStep(kind: NodeKind): boolean {
+  return kind === "task" || kind === "agent" || kind === "integration";
 }

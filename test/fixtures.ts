@@ -22,6 +22,7 @@ export function card(id: string, overrides: Record<string, unknown> = {}) {
     outputs: [],
     acceptanceCriteria: [],
     inferred: false,
+    run: { executor: "", skills: [], maxRuntimeMinutes: 30 },
     ...overrides,
   };
 }

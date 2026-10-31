@@ -6,13 +6,16 @@ import type { ValidationIssue, WorkflowDefinition } from "../graph/types.ts";
 import { EMPTY_CONFIG, type HarnessConfig } from "../harness/config.ts";
 import { JOB_ID_PATTERN, LABEL_PATTERN, parseObservation, type PullOutcome } from "../harness/observation.ts";
 import { defaultSource, type ObservationSource } from "../harness/source.ts";
+import { preflight } from "../graph/preflight.ts";
+import { REQUEST_TTL_MS } from "../graph/runs.ts";
 
 /**
  * Private design-time API over the workflow store.
  *
  * This service stores and returns workflow definitions. It never interprets
  * node instructions, edge labels, or any other imported text as a command,
- * and it exposes no execution route.
+ * and it exposes no execution route. A run request is a record a person
+ * makes; nothing in this process acts on it (docs/RUN-PLAN.md).
  */
 
 export const MAX_BODY_BYTES = 1_000_000;
@@ -297,6 +300,28 @@ async function handle(
     return refreshJob(res, store, harness, id);
   }
 
+  const runsMatch = /^\/api\/workflows\/([^/]+)\/runs(?:\/([^/]+)(\/cancel)?)?$/.exec(path);
+  if (runsMatch) {
+    const id = pathId(runsMatch[1]!);
+    if (id === null) return sendError(res, 400, "bad_request", "The workflow id is not valid.");
+    if (store.load(id) === null) return sendError(res, 404, "not_found", "No such workflow.");
+    if (runsMatch[2] === undefined) {
+      if (method === "GET") return sendJson(res, 200, runsView(store, harness, id));
+      if (method === "POST") return requestRun(req, res, store, harness, id);
+      return methodNotAllowed(res, ["GET", "POST"]);
+    }
+    const runId = pathId(runsMatch[2]);
+    if (runId === null) return sendError(res, 400, "bad_request", "The run id is not valid.");
+    if (runsMatch[3] === undefined) {
+      if (method !== "GET") return methodNotAllowed(res, ["GET"]);
+      const detail = store.runs.get(id, runId, harness.now());
+      if (!detail) return sendError(res, 404, "not_found", "No such run request.");
+      return sendJson(res, 200, detail);
+    }
+    if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+    return cancelRun(res, store, harness, id, runId);
+  }
+
   const match = /^\/api\/workflows\/([^/]+)$/.exec(path);
   if (match) {
     const id = pathId(match[1]!);
@@ -551,6 +576,71 @@ async function saveWorkflow(
     return;
   }
   sendError(res, 404, "not_found", "No such workflow.");
+}
+
+// --- Run requests (records only) ---------------------------------------------------
+//
+// A request freezes one revision that passed preflight. No conductor reads
+// these yet, so nothing runs. The request expires so a conductor installed
+// later cannot act on an old click.
+
+function runsView(store: WorkflowStore, harness: Harness, id: string) {
+  return {
+    runs: store.runs.list(id, harness.now()),
+    conductor: "none" as const,
+    requestTtlMs: REQUEST_TTL_MS,
+    serverNow: harness.now(),
+  };
+}
+
+async function requestRun(
+  req: IncomingMessage,
+  res: ServerResponse,
+  store: WorkflowStore,
+  harness: Harness,
+  id: string,
+): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  if (!isRecord(body.value) || !Number.isInteger(body.value.expectedRevision)) {
+    return sendError(res, 422, "invalid", "A run request names the revision it was checked against (expectedRevision).");
+  }
+  const current = store.load(id);
+  if (!current) return sendError(res, 404, "not_found", "No such workflow.");
+  if (current.revision !== body.value.expectedRevision) {
+    return sendError(res, 409, "conflict", "The workflow changed since you checked it. Check it again before requesting a run.");
+  }
+  const now = harness.now();
+  if (store.runs.active(id, now)) {
+    return sendError(res, 409, "run_already_requested", "A run request for this workflow is still open. Cancel it or let it expire first.");
+  }
+  const plan = preflight(current, null);
+  if (!plan.ok) {
+    return sendError(
+      res,
+      422,
+      "preflight_failed",
+      "This workflow cannot run yet.",
+      plan.issues.map((item) => ({
+        code: item.code,
+        path: item.cardId ? `card:${item.cardId}` : item.edgeId ? `edge:${item.edgeId}` : "workflow",
+        message: item.message,
+      })),
+    );
+  }
+  const detail = store.runs.request(current, plan, now);
+  res.setHeader("location", `/api/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(detail.id)}`);
+  sendJson(res, 201, detail);
+}
+
+function cancelRun(res: ServerResponse, store: WorkflowStore, harness: Harness, id: string, runId: string): void {
+  const now = harness.now();
+  const before = store.runs.get(id, runId, now);
+  if (!before) return sendError(res, 404, "not_found", "No such run request.");
+  if (before.status !== "requested") {
+    return sendError(res, 409, "run_not_open", `This request is already ${before.status}.`);
+  }
+  sendJson(res, 200, store.runs.cancel(id, runId, now));
 }
 
 // --- Hermes job links (read-only observation) -------------------------------------

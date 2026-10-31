@@ -32,6 +32,7 @@ import { CardNode, type CardFlowNode } from "./CardNode.tsx";
 import { CARD_KINDS, EDGE_LABEL, makeId, newCard } from "./cards.ts";
 import { BriefPanel } from "./BriefPanel.tsx";
 import { HarnessPanel } from "./HarnessPanel.tsx";
+import { RunPanel } from "./RunPanel.tsx";
 import { CardDetails, EdgeDetails } from "./DetailsPanel.tsx";
 
 type Meta = Omit<WorkflowDefinition, "nodes" | "edges">;
@@ -163,6 +164,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const [changeCount, setChangeCount] = useState(0);
   const [briefOpen, setBriefOpen] = useState(true);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [runOpen, setRunOpen] = useState(false);
   const flow = useReactFlow();
 
   // Saves read the newest canvas through this ref, not a stale closure.
@@ -352,25 +354,43 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     [flush],
   );
 
+  const settleAll = useCallback(async (): Promise<boolean> => {
+    if (retired.current) return true;
+    if (blocked.current || holding.current) return false;
+    await loadDone.current;
+    if (retired.current) return true;
+    if (blocked.current || holding.current) return false;
+    // Include an edit that lands while the previous write is still open.
+    // False means the write failed: the shell must stay here so the error
+    // remains visible and a late unmount write cannot race a reload.
+    while (!retired.current && !blocked.current && !holding.current && (dirty.current || saving.current || pending.current)) {
+      if (!latest.current.meta) return false;
+      const saved = await flush();
+      if (!saved) return false;
+    }
+    return !blocked.current && !holding.current;
+  }, [flush]);
+
+  /** Save everything, then report the revision the server holds, for a run request. */
+  const settleForRun = useCallback(async (): Promise<number | null> => {
+    if (retired.current) return null;
+    return (await settleAll()) ? revision.current : null;
+  }, [settleAll]);
+
+  /** Select one card and bring it into view, e.g. from a run-check message. */
+  const focusCard = useCallback(
+    (id: string) => {
+      setNodes((current) => current.map((node) => ({ ...node, selected: node.id === id })));
+      setEdges((current) => current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)));
+      void flow.fitView({ nodes: [{ id }], maxZoom: 1, duration: 300 });
+    },
+    [flow],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
-      async settle(): Promise<boolean> {
-        if (retired.current) return true;
-        if (blocked.current || holding.current) return false;
-        await loadDone.current;
-        if (retired.current) return true;
-        if (blocked.current || holding.current) return false;
-        // Include an edit that lands while the previous write is still open.
-        // False means the write failed: the shell must stay here so the error
-        // remains visible and a late unmount write cannot race a reload.
-        while (!retired.current && !blocked.current && !holding.current && (dirty.current || saving.current || pending.current)) {
-          if (!latest.current.meta) return false;
-          const saved = await flush();
-          if (!saved) return false;
-        }
-        return !blocked.current && !holding.current;
-      },
+      settle: settleAll,
       rename(title: string) {
         if (!latest.current.meta) {
           pendingTitle.current = title;
@@ -395,7 +415,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         pending.current = false;
       },
     }),
-    [flush, markDirty],
+    [flush, markDirty, settleAll],
   );
 
   // Warn before closing the tab while edits are still on their way.
@@ -568,6 +588,14 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         >
           Job evidence
         </button>
+        <button
+          type="button"
+          className="brief-toggle"
+          aria-expanded={runOpen}
+          onClick={() => setRunOpen((open) => !open)}
+        >
+          What would run
+        </button>
         <div className="add-group" role="group" aria-label="Add a card">
           <span className="add-group__label">Add</span>
           {CARD_KINDS.map(({ kind, label, hint }) => (
@@ -580,6 +608,15 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
       </header>
       {briefOpen && <BriefPanel value={meta.brief} onChange={setBrief} onClose={() => setBriefOpen(false)} />}
       {evidenceOpen && <HarnessPanel workflowId={workflowId} onClose={() => setEvidenceOpen(false)} />}
+      {runOpen && (
+        <RunPanel
+          workflowId={workflowId}
+          definition={buildDefinition(meta, nodes, edges)}
+          settle={settleForRun}
+          onSelectCard={focusCard}
+          onClose={() => setRunOpen(false)}
+        />
+      )}
 
       {save.kind === "conflict" && (
         <div className="banner banner--warn" role="alert">

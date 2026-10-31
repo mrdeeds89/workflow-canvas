@@ -9,6 +9,7 @@ import { migrateToCurrent } from "../src/graph/migrate.ts";
 import { openStore } from "../src/graph/store.ts";
 import { createApp } from "../src/http/server.ts";
 import { emptyWorkflow } from "./fixtures.ts";
+import { SCHEMA_VERSION } from "../src/graph/types.ts";
 
 /** Markup, headings and uneven whitespace must survive as text, not as structure. */
 const VERBATIM =
@@ -43,7 +44,7 @@ test("stores a workflow brief verbatim and does not parse its headings", () => {
   assert.equal(result.ok, true, issuesOf(result));
   if (!result.ok) return;
   assert.equal(result.value.brief, VERBATIM);
-  assert.equal(result.value.schemaVersion, 3);
+  assert.equal(result.value.schemaVersion, SCHEMA_VERSION);
   assert.equal("purpose" in result.value, false);
   assert.equal("inputs" in result.value, false);
   assert.equal("runCommand" in result.value, false);
@@ -78,9 +79,9 @@ test("migrates a schema 2 workflow to an empty brief without inventing headings"
   if (!result.ok) return;
   assert.equal(result.migrated, true);
   assert.equal(result.from, 2);
-  assert.equal(result.to, 3);
+  assert.equal(result.to, SCHEMA_VERSION);
   const document = result.value as Record<string, unknown>;
-  assert.equal(document.schemaVersion, 3);
+  assert.equal(document.schemaVersion, SCHEMA_VERSION);
   assert.equal(document.brief, "");
   assert.equal(document.description, "keep this description");
   const stored = JSON.stringify(document);
@@ -97,7 +98,7 @@ test("migration keeps an existing brief string exactly and does not rewrite it",
   assert.equal(result.ok, true);
   if (!result.ok) return;
   const document = result.value as Record<string, unknown>;
-  assert.equal(document.schemaVersion, 3);
+  assert.equal(document.schemaVersion, SCHEMA_VERSION);
   assert.equal(document.brief, VERBATIM);
 });
 
@@ -117,7 +118,7 @@ test("loading a stored schema 2 row returns an empty brief and does not rewrite 
     const store = openStore(path);
     const loaded = store.load("wf-old");
     assert.equal(loaded?.brief, "");
-    assert.equal(loaded?.schemaVersion, 3);
+    assert.equal(loaded?.schemaVersion, SCHEMA_VERSION);
     assert.equal(loaded?.title, "Legacy map");
     store.close();
 
@@ -214,7 +215,7 @@ test("the API returns the brief as inert text and a stale save does not replace 
 });
 
 function validateBrief(brief: unknown) {
-  return validateWorkflow(emptyWorkflow({ schemaVersion: 3, brief }));
+  return validateWorkflow(emptyWorkflow({ brief }));
 }
 
 function validateBriefFrom(document: Record<string, unknown>) {

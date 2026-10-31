@@ -1179,3 +1179,90 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 .react-flow__edge-text { fill: var(--text); }
 .react-flow__node:focus-visible .card { outline: 2px solid var(--accent); outline-offset: 3px; }
 .react-flow__edge:focus-visible .react-flow__edge-path { stroke-width: 4; }
+
+/* What would run: the run checks applied to the canvas. Nothing here runs. */
+.runplan__issues,
+.runplan__notices {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.runplan__notices { color: var(--muted); font-size: 12px; }
+
+.runplan__link {
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.runplan__actions { margin-top: 8px; align-items: center; }
+
+.runplan__stages {
+  margin: 0 0 8px;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.runplan__stage {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.runplan__stage-head { font-weight: 700; font-size: 12.5px; margin-bottom: 2px; }
+
+.runplan__stage ul { margin: 0; padding-left: 18px; }
+
+.runplan__step--approval .runplan__step-title { color: var(--kind-approval); font-weight: 600; }
+
+.card__runner {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11.5px;
+}
+
+.card__runner-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+.card__runner-none { color: var(--muted); font-style: italic; }
+
+.input--short { max-width: 9ch; }
+
+/* Inferred: drawn by an agent from a source, not yet confirmed by a person. */
+.inferred-notice {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--warn-border);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.inferred-notice p { margin: 0; line-height: 1.4; }
+
+.card__inferred {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px dashed var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}

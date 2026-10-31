@@ -1,7 +1,7 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Versions this build can read. Older ones are migrated forward on load. */
-export const READABLE_SCHEMA_VERSIONS = [1, 2, 3] as const;
+export const READABLE_SCHEMA_VERSIONS = [1, 2, 3, 4] as const;
 
 /** Workflow brief length. Same bound as other stored prose fields. */
 export const MAX_BRIEF_LENGTH = 20_000;
@@ -72,6 +72,39 @@ export type Proposal = {
   youOwn: string[];
 };
 
+/**
+ * How a card would be handed to Hermes if a run is ever requested.
+ *
+ * Plain data. Naming a profile or a skill here does not grant it anything and
+ * does not start anything: Canvas never executes. A Hermes-side conductor
+ * checks these names against its own private allowlist before it acts.
+ */
+export type RunSettings = {
+  /** Hermes profile that would do this step, or empty when not chosen yet. */
+  executor: string;
+  /** Hermes skill names to load for this step. */
+  skills: string[];
+  /** Upper bound for one attempt, in minutes. */
+  maxRuntimeMinutes: number;
+};
+
+export const DEFAULT_MAX_RUNTIME_MINUTES = 30;
+export const MAX_RUNTIME_MINUTES = 240;
+export const MAX_SKILLS = 20;
+/** Hermes profile names: lowercase letters, digits, hyphen, underscore. */
+export const EXECUTOR_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** Skill names, optionally with a category path such as `research/briefing`. */
+export const SKILL_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,63}(\/[a-z0-9][a-z0-9_.-]{0,63}){0,3}$/;
+
+export function defaultRunSettings(): RunSettings {
+  return { executor: "", skills: [], maxRuntimeMinutes: DEFAULT_MAX_RUNTIME_MINUTES };
+}
+
+/** True for a skill name that is safe to pass to Hermes as one argument. */
+export function isSkillName(value: string): boolean {
+  return SKILL_PATTERN.test(value) && !value.split("/").some((part) => part === "." || part === "..");
+}
+
 export type Port = {
   id: string;
   name: string;
@@ -95,6 +128,8 @@ export type WorkflowNode = {
   outputs: Port[];
   acceptanceCriteria: string[];
   inferred: boolean;
+  /** Run settings. Ignored for approval, artifact, and note cards. */
+  run: RunSettings;
 };
 
 export type WorkflowEdge = {

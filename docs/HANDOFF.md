@@ -6,7 +6,7 @@ Workflow Canvas is a design-only editor. This document describes the committed p
 
 What exists:
 
-- Schema 3 graph model, validation, and in-memory migration from schema 1 and 2 in `src/graph/`. The stored row is rewritten only when the client saves. Schema 3 adds a workflow-level plain-text `brief`.
+- Schema 4 graph model, validation, and in-memory migration from schemas 1–3 in `src/graph/`. The stored row is rewritten only when the client saves. Schema 3 added a workflow-level plain-text `brief`; schema 4 adds per-card run settings (section "Run checks and run requests").
 - SQLite create/save/reload via `node:sqlite` (experimental in Node 22.23.4). Stale revisions and invalid graphs do not change the stored row.
 - Design-time HTTP API in `src/http/` on `node:http` only. Routes: `GET /api/health`, `GET /api/library`, `POST /api/projects`, `PATCH /api/projects/:id`, `POST /api/workflows`, `GET` / `PUT` / `DELETE /api/workflows/:id`, `POST /api/workflows/:id/move`, `POST /api/workflows/:id/duplicate`. No execution route, no import/export route, and no authentication.
 - Canvas UI: React 19.3.1 and `@xyflow/react` 12.12.0, built by Vite 8.3.5 from `web/` into gitignored `dist/web`. The service serves that build for non-`/api` paths with `script-src 'self'`, `nosniff`, `no-referrer`, traversal refusal, and an `index.html` fallback. Without a build the service stays API-only.
@@ -231,7 +231,25 @@ Design: `docs/AGENT-PROPOSALS.md`. It covers revision-bound proposals with a clo
 
 ## Running a workflow (plan only)
 
-Plan: `docs/RUN-PLAN.md`. Dom asked for this before agent-assisted editing. Hermes executes; Canvas records a human's run request and approvals; a Hermes-side, LLM-free conductor creates Kanban tasks stage by stage with idempotency keys. Nothing past an Approval card exists until Dom approves in Canvas, because Hermes 0.22.5 lets any Kanban-enabled profile unblock a card. The pilot runs under a single runner profile with no trading or money tools. Dom decided R-D2, R-D4 (pilot without the login on a trusted network), R-D5 and R-D6 (branches supported); push vs pull (R-D1) and the pilot workflow (R-D3) are open. §3 changes the dispatch row of `docs/HERMES-INTEGRATION.md`, which still needs that thread's agreement. Nothing is built or installed.
+Plan: `docs/RUN-PLAN.md`. Dom asked for this before agent-assisted editing. Hermes executes; Canvas records a human's run request and approvals; a Hermes-side, LLM-free conductor creates Kanban tasks stage by stage with idempotency keys. Nothing past an Approval card exists until Dom approves in Canvas, because Hermes 0.22.5 lets any Kanban-enabled profile unblock a card. The pilot runs under a single runner profile with no trading or money tools. Dom decided all six on 2026-10-31: pull (R-D1), Hermes-only executors (R-D2), an existing daily news-briefing job as the private practice map, with a copy for a second agent profile (R-D3), pilot without the login on a trusted network (R-D4), outcome only (R-D5), and branches supported (R-D6). The dispatch row of `docs/HERMES-INTEGRATION.md` is updated to match. Slice R1 is built (next section); no conductor exists and nothing is installed.
+
+## Run checks and run requests (R1, built)
+
+Slice R1 of `docs/RUN-PLAN.md`. Nothing executes: there is no conductor, and Canvas holds no harness credential.
+
+- **Schema 4.** Each card has `run: { executor, skills, maxRuntimeMinutes }`. A profile name matches `^[a-z0-9][a-z0-9_-]{0,63}$`, skills match a lowercase name with optional `category/` parts (no `.`/`..` parts, at most 20), and the limit is 1–240 minutes. Schema 3 migrates in memory to `{ "", [], 30 }`; migration never picks a profile. A save without `run` is `422`, so an old browser tab cannot wipe settings.
+- **`src/graph/preflight.ts`** (shared, no Node imports). Task, agent and integration cards run, approval cards stop the run, artifact cards pass through, and note cards are ignored. Requires, data and conditional arrows are dependencies; revision arrows are ignored. It refuses: nothing to run, a card that is not `configured`, an Inferred card or arrow, no profile, no description or instructions, a loop through data or conditional arrows, and a branch from a card that does not run or with fewer than two distinct conditions. When given an allowlist (none yet) it also refuses unknown profiles and skills. Stages break at approvals and branch decisions. A card that branches lead back into runs on whichever branch was taken; one reachable only through some branches lists which values it needs.
+- **`run_requests` table** (`src/graph/runs.ts`) beside the workflow. `POST /api/workflows/:id/runs {expectedRevision}` re-runs preflight on the stored revision: `409` if stale, `422 preflight_failed` with one issue per problem, `409 run_already_requested` while one is open, otherwise `201` with a frozen snapshot, its SHA-256, and the plan. Requests expire after 15 min; cancel is `POST …/runs/:runId/cancel`. Deleting a workflow deletes its requests; duplicating does not copy them. A request never changes the document or its revision. `/run`, `/execute` and other start routes still `404`, and health still says `execution: disabled`.
+- **UI.** Card details have an "If this runs" section, and the card shows "Done by". **What would run** in the toolbar lists blockers (each opening its card), stages, notices, and requests, with Request run and Cancel. Request run first saves pending edits, then sends the saved revision. Inferred cards and arrows show a notice with **Confirm**, which clears the flag; a card shows an Inferred tag until confirmed.
+
+Verified on the project VM, 2026-10-31, against the working tree, pinned image `node:22-bookworm@sha256:18a6d90f…`:
+- `npm run typecheck`: passed, both projects.
+- `npm test`: **156 pass / 0 fail** (136 before plus 20 in `preflight.test.ts` and `runs.test.ts`).
+- `bash scripts/editor-browser.sh`: **24 passed** (23 before plus one runs test), loopback only, service answered after restart, **2 restart checks passed**. The runs test confirms an Inferred card, fixes the missing profile from the message link, checks the two stages split at the approval, requests a run, reads back one `requested` request at the stored revision with the revision unchanged, then cancels and sees `cancelled` after reload. Screenshots go to ignored `test-results/runs-shots/`.
+- `bash scripts/test-browser.sh`: **4 theme tests passed**, axe contrast included (its fixture now carries `run`).
+- Not run: `scripts/smoke-api.sh` (its payload was updated for `run`).
+
+Next in the plan: R2, the conductor and a `run` exporter subcommand, against throwaway Hermes homes only.
 
 ## Next action
 

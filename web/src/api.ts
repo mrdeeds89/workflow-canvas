@@ -1,6 +1,7 @@
 import type { Library, ProjectSummary } from "../../src/graph/library.ts";
 import type { ValidationIssue, WorkflowDefinition } from "../../src/graph/types.ts";
 import type { LinkView, StoredObservation, Thresholds } from "../../src/harness/observation.ts";
+import type { RunDetail, RunView } from "../../src/graph/run-types.ts";
 
 export type { Library, ProjectSummary, WorkflowSummary } from "../../src/graph/library.ts";
 
@@ -78,6 +79,23 @@ export function loadWorkflow(id: string): Promise<WorkflowDefinition> {
 /** Saves the document; its `revision` is the one the client expects to replace. */
 export function saveWorkflow(definition: WorkflowDefinition): Promise<WorkflowDefinition> {
   return request("PUT", `/api/workflows/${encodeURIComponent(definition.id)}`, definition);
+}
+
+// --- Run requests (records only; nothing runs) ----------------------------------
+
+export type RunsListing = { runs: RunView[]; conductor: "none"; requestTtlMs: number; serverNow: number };
+
+export function fetchRuns(workflowId: string): Promise<RunsListing> {
+  return request("GET", `/api/workflows/${encodeURIComponent(workflowId)}/runs`);
+}
+
+/** Record a run request for the revision the browser checked. Nothing starts. */
+export function requestRun(workflowId: string, expectedRevision: number): Promise<RunDetail> {
+  return request("POST", `/api/workflows/${encodeURIComponent(workflowId)}/runs`, { expectedRevision });
+}
+
+export function cancelRun(workflowId: string, runId: string): Promise<RunView> {
+  return request("POST", `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/cancel`);
 }
 
 // --- Hermes job evidence (read-only) -------------------------------------------

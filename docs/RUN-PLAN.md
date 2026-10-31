@@ -169,11 +169,10 @@ Dom, 2026-10-31:
 - **R-D4. Pilot without the login, on a trusted network.** Consequence, stated plainly: until the access token exists, the approval gate is a Canvas UI convention, not an enforced control. Any process that can reach the Canvas API can record an approval or a run request. What still bounds a pilot run: the runner profile's toolset (section 8, no trading or money tools), the executor and skill allowlists, no retries, and the dedicated board. To keep that exposure small, the pilot keeps Canvas on loopback, reached through the SSH tunnel, rather than a LAN bind. Section 6's two-part gate becomes fully enforced only after R3.
 - **R-D5. Outcome only.** Completed, blocked, crashed, timed out, gave up. No summaries, comments, or error text leave the harness. The single exception is the branch choice in R-D6, which is a value from a fixed list, not text.
 - **R-D6. Branches are supported.** See section 12.1.
+- **R-D1. Pull (option A).** After the comparison in section 12.2, Dom chose pull as safer. The ownership row in `docs/HERMES-INTEGRATION.md` §1 is updated to match.
+- **R-D3. Practice workflow: an existing daily news-briefing cron job on one agent profile.** First as a visual map of that job (read-only; nothing on the harness changes), then a copy assigned to a second agent profile, to practise the review-and-request loop. The map and the copy live in the private preview database, not in this repository, and the job is not named here. The copy writes to a local file behind an Approval card instead of a chat delivery. Its topics include market news; it reads news and never trades.
 
-Open:
-
-- **R-D1. Push or pull.** Dom leans towards Canvas pushing (option B), and asked how co-building with agents and then deploying to one or several agents on the same harness works best. That is answered in section 12.2. Not settled.
-- **R-D3. Pilot workflow.** Which non-financial, local-output workflow, with one Approval card.
+Still open: nothing for R1.
 
 ### 12.1 Branches (R-D6)
 
@@ -181,7 +180,7 @@ A `conditional` arrow's label becomes one value of the source card's **branch li
 
 - The chosen branch's cards are created in the next stage. Cards reachable only through untaken branches are **never created**. The run shows them as "Skipped: branch `fail` not taken". Nothing is cancelled mid-flight, because nothing on an untaken path ever exists.
 - A missing or unrecognized branch value stops the run at that card ("Branch not reported"), and Dom decides.
-- A card reachable through both a taken and an untaken path runs once its taken path finishes. A card with a requires parent on an untaken path is skipped too, and the run view says which parent.
+- **Joins.** A card that several branches lead back into (for example "Write the brief" after either "engine worked" or "fall back to web search") runs whichever branch was taken, waiting only for the parents that exist. A card reachable only through some branches exists only when one of those is taken. The run view lists, per card, which branch values it needs.
 - Preflight refuses a conditional source card with fewer than two labelled branches, duplicate labels, or a conditional arrow into an Approval card's downstream that would skip the approval.
 
 Acceptance adds: a fixture run per branch value, plus missing, unrecognized, and multiple values; each branch creates only its own cards, and skipped cards never appear on the board.

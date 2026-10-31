@@ -7,7 +7,7 @@ Browser client → application HTTP service → SQLite and persistent data volum
 Frontend is built and served with the application. Docker Compose is the intended portable distribution boundary and is not packaged yet. Keep host addresses and deployment secrets outside repository defaults.
 
 ## Graph model
-Versioned WorkflowDefinition (schema 3): id, title, description, brief, revision, nodes, edges, groups, sourceReferences.
+Versioned WorkflowDefinition (schema 4): id, title, description, brief, revision, nodes, edges, groups, sourceReferences. Schema 4 adds per-card `run` settings (Hermes profile, skills, time limit), which are names only; schema 3 documents migrate with nothing chosen.
 
 `brief` is one plain-text string for the whole workflow. It is not a parsed form. Suggested headings are a writing convention only.
 
