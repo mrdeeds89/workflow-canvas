@@ -100,7 +100,7 @@ A parallel planning session (`.hermes/plans/2026-10-31_131255-run-tracking-contr
 3. **Reclaim can re-run an attempt.** `--max-retries 1` limits failure retries, not crash reclaim. Deliveries therefore need their own effect key, so the conductor sends each delivery at most once, checked against its ledger before `hermes send`.
 4. **Run evidence must be durable.** The R1 request table keeps 20 rows per workflow and is deleted with the workflow. Run reports go in a separate append-only store that is never auto-pruned.
 
-Unresolved conflicts with that plan (it requires a login before any pilot, evidence import and replay first, a one-shot adapter instead of Kanban, and no delivery) are put to Dom; see HANDOFF.
+Dom resolved the remaining conflicts on 2026-10-31. The pilot runs without the login on a trusted network, uses Kanban with several agents, and anyone can install. These four fixes are adopted. Workers must not be able to reach other profiles' credentials; this is a hard gate for R4, so if R2.0 cannot establish it the pilot waits. **The first pilot delivers only to a local file or Hermes chat**; Telegram and other platforms come after it. The parallel plan's evidence-import-first order, one-shot adapter, and login-first gate are not adopted.
 
 ## 8. Decisions
 
