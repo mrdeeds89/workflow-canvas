@@ -1193,6 +1193,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 .runplan__notices { color: var(--muted); font-size: 12px; }
 
 .runplan__link {
+  /* A button is always inline-block, whose baseline is its last line, so the
+     list bullet would drop to the bottom of a wrapped message. Top-align it. */
+  vertical-align: top;
   font: inherit;
   text-align: left;
   padding: 0;

@@ -249,6 +249,8 @@ Verified on the project VM, 2026-10-31, against the working tree, pinned image `
 - `bash scripts/test-browser.sh`: **4 theme tests passed**, axe contrast included (its fixture now carries `run`).
 - Not run: `scripts/smoke-api.sh` (its payload was updated for `run`).
 
+Preview: rebuilt and restarted on 2026-10-31 after a backup in ignored `backups/`. All 7 existing workflows loaded as schema 4 and the bind is still loopback only. Two private practice workflows (a read-only map of an existing daily briefing job, and a copy assigned to a second agent profile) were seeded into the preview database only. Neither is in this repository.
+
 Next in the plan: R2, the conductor and a `run` exporter subcommand, against throwaway Hermes homes only.
 
 ## Next action
