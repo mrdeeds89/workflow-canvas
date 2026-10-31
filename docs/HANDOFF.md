@@ -229,6 +229,10 @@ Not yet verified (each needs a harness install, which is a separate approval):
 
 Design: `docs/AGENT-PROPOSALS.md`. It covers revision-bound proposals with a closed set of operations, brief and source citations checked against the stored text, and an **Assumption** label for anything uncited. It also covers per-op conflict classes, partial acceptance with dependency closure, untrusted skill/Markdown import with versioned sections and stale-source warnings, and a transport-neutral API with no agent accept route. Dom decided D2–D5 on 2026-10-31. The first slice (D1) is not chosen: Dom paused this to plan running first. Nothing is built. The API questions for the Hermes integration thread (§9) are not yet answered.
 
+## Running a workflow (plan only)
+
+Plan: `docs/RUN-PLAN.md`. Dom asked for this before agent-assisted editing. Hermes executes; Canvas records a human's run request and approvals; a Hermes-side, LLM-free conductor creates Kanban tasks stage by stage with idempotency keys. Nothing past an Approval card exists until Dom approves in Canvas, because Hermes 0.22.5 lets any Kanban-enabled profile unblock a card. Real-harness work waits for the access token's `approve` scope. The pilot runs under a single runner profile with no trading or money tools. Decisions R-D1 to R-D6 are open, and §3 changes the dispatch row of `docs/HERMES-INTEGRATION.md`, which still needs that thread's agreement. Nothing is built or installed.
+
 ## Next action
 
 Job evidence: review and commit the prototype, then, only with approval, install the exporter and one restricted key per profile on the first harness and run the three "not yet verified" checks above. Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run, then the access token and Compose hosting. The live preview still serves the previous `dist/web`; this commit does not rebuild or restart it. Do not add execution, skill import, a deployment workflow, or a non-loopback bind. Publishing the source is not a deployment. The refused browser-back URL mismatch remains a follow-up.
