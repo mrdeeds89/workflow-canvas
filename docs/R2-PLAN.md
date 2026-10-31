@@ -14,6 +14,25 @@ Canvas still never executes. A small, model-free **conductor** on the Hermes mac
 - Cron delivery also knows `local` (keep output, send nothing) and `bot-chat[:profile]` (post into a profile's Bot Chat). Whether `hermes send` accepts `bot-chat` is unverified (R2.0).
 - Kanban facts are in `docs/RUN-PLAN.md` §1. Still to verify in R2.0: `show/list --json` fields, idempotency replay, `archive` on a running task, and the `--parent` gating.
 
+## R2.0 findings (verified 2026-10-31, throwaway board, no gateway)
+
+Probed with the real `hermes` 0.22.5 CLI against an isolated board; the real board was confirmed unchanged (direct SQLite read). Raw output was not kept in the repo.
+
+1. **Board isolation uses `HERMES_KANBAN_DB`, not `HERMES_HOME`.** The Kanban DB resolves to the root `~/.hermes/kanban.db` regardless of `HERMES_HOME`; a stray `create` landed on the real board and had to be purged. Tests must set `HERMES_KANBAN_DB` to a throwaway file (and remember it persists across shells). The installer/conductor must treat the board as a shared single-host resource, not a per-home one.
+2. **Idempotency works, but the key is not stored on the task.** Two `create --idempotency-key K` calls return the same id and leave one task, so replay is safe. But no `idempotency_key` field appears in `create`/`show --json`, so the conductor cannot query "is there a task for key K?". It must keep its own ledger of created ids (this reinforces §7a finding 1) and rely on create-replay for dedup.
+3. **`--parent` gating holds without a gateway.** A child is `todo` while its parent is open and promotes to `ready` when the parent completes; `list` recomputes readiness. Good for offline tests.
+4. **`archive` accepts ready and running-status tasks.** Cancel/stop can archive. (A task created `--initial-status running` with no live claim normalises to `ready`; a genuinely claimed worker's archive behaviour is an R4 check under a gateway.)
+5. **A non-existent assignee is skipped, not spawned.** `dispatch --dry-run` reports an unknown-profile task as "Skipped (non-spawnable assignee)". So the installer must create the runner profile, or steps silently never run — a safety property, not a failure.
+6. **`hermes send` does NOT accept `local` or `bot-chat`.** `--to local` and `--to bot-chat[:profile]` are rejected ("not configured" / "Unknown plugin platform"). `send` is messaging platforms only. Consequences: a **local-file** delivery is the **conductor writing the file itself** (no `send`); **Hermes-chat** delivery is **not reachable via `send`** and needs another mechanism (cron's `bot-chat` deliver mode, or a session inject) — open, see below. `local` remains valid as the cron **`--deliver`** mode for the tick job.
+7. **`send --list` reads `channel_directory.json`, which a running gateway populates.** A profile home with no gateway run shows no targets. So the conductor reports targets from the gateway-populated directory; a freshly connected Hermes may show none until its gateway has run once.
+8. **`send --json` returns exit 0 even on error**, with the reason in an `error` field. The conductor must parse that field, not trust the exit code.
+9. **Worker credential isolation — the hard gate — is achievable with the Docker terminal backend.** `terminal.backend: docker` runs the worker in a namespace-isolated container. The default `local` backend does not stop a worker reading `~/.hermes/.env` or other profiles' tokens (deny rules block overwriting those files, not reading them), so "no messaging tools" alone is not isolation. R4 requires either the Docker backend with no mount of the Hermes home, or a runner with terminal/file toolsets disabled (tool-free steps only). If the installed host has no Docker and the step needs tools, the pilot cannot run that step.
+
+**Open after R2.0 (for Dom or R2.1 design):**
+
+- **Hermes-chat delivery.** Since `send` can't reach it, decide between cron `bot-chat` delivery, a session inject, or dropping "Hermes chat" and offering only messaging platforms plus local file in the first pilot. Dom asked for "local file or Hermes chat" first; local file is settled, Hermes chat is not.
+- **Target discovery timing.** Handle a connected Hermes whose `send --list` is still empty because its gateway has not run.
+
 ## Pieces
 
 ### 1. Run bundle (Canvas, shared code)
@@ -41,10 +60,10 @@ Reachability: when Canvas and Hermes are on the same machine, the conductor talk
 
 ### 4. Choosing where results go
 
-- On connect, and then hourly, the conductor reports the harness's delivery targets: `hermes send --list`, plus `local`. Canvas stores a **label and an opaque id** per target (for example "Telegram · Briefings topic"). The real chat ids stay in the conductor's private file on the Hermes machine.
-- **Deliver** is a new setting on artifact cards (schema 5): `deliverTo: <target id> | ""`. An artifact card marks an output, so delivering it means sending that output. The details panel offers the connected Hermes's targets, plus "Keep in Hermes only".
-- Preflight refuses a delivery whose target id is not in the connected harness's current list, and a delivery artifact with no producing step before it.
-- When the producing step completes, the **conductor**, not the agent, sends the attached result: `hermes send -t <real target> -s "<workflow> · <card>" -f <file>`. The runner profile therefore needs no messaging tools, and an agent cannot choose where output goes.
+- On connect, and then hourly, the conductor reports the harness's messaging targets from `hermes send --list` (R2.0 finding 7: these come from a gateway-populated directory and may be empty until the gateway has run). Canvas always offers one built-in target, **Write to a local file**, independent of the harness. Canvas stores a **label and an opaque id** per target (for example "Telegram · Briefings topic"). The real chat ids stay in the conductor's private file on the Hermes machine.
+- **Deliver** is a new setting on artifact cards (schema 5): `deliverTo: <target id> | ""`. An artifact card marks an output, so delivering it means sending that output. The details panel offers Write to a local file and the connected Hermes's messaging targets. "Hermes chat" is not offered yet: `hermes send` cannot reach it (R2.0 finding 6), and its mechanism is an open decision.
+- Preflight refuses a delivery whose target id is neither the local-file target nor in the connected harness's current list, and a delivery artifact with no producing step before it.
+- When the producing step completes, the **conductor**, not the agent, performs the delivery. For a messaging target: `hermes send -t <real target> -s "<workflow> · <card>" -f <file>`, parsing the JSON `error` field rather than trusting the exit code (finding 8). For the local-file target: the conductor writes the result to a run-scoped path itself; no `send`. The runner profile cannot send either way, and an agent cannot choose where output goes.
 - The result text never passes through Canvas. Canvas sees only the outcome: delivered, failed, or skipped by branch (R-D5).
 
 ### 5. Installer and conductor (Hermes side)
@@ -71,7 +90,7 @@ Per run: progress per stage, per-card badges labelled "reported by Kanban", per-
 
 | Step | Work | Done when |
 |---|---|---|
-| **R2.0** | Verify Kanban and `hermes send` facts on a throwaway `HERMES_HOME` with no gateway: `send --list` format, `bot-chat` support, `send` to a test target in a throwaway home with no platform credentials (expect a clean failure), plus the Kanban items above. Confirm the desk's running gateway never sees the throwaway home. | Facts table added here |
+| **R2.0** | **Done 2026-10-31.** Verified Kanban and `hermes send` facts on a throwaway board with no gateway; real board confirmed unchanged. | Findings recorded above |
 | **R2.1** | Bundle compiler, run state, approvals, reports, pairing and conductor-token routes, schema 5 `deliverTo`, preflight delivery checks. Node tests. | Claim-once, expiry stops at claim, the token cannot reach any other route, a used or expired pairing code is refused, unknown target refused |
 | **R2.2** | Conductor `tick` with a fake `hermes` (records argv, fake board), then against the real CLI and a throwaway home | §7 checks pass |
 | **R2.3** | `install`, `uninstall`, `allow-*`, `status` against a throwaway home: dry-run output, each change, and clean removal | Install then uninstall leaves only the board; nothing outside the throwaway home changes |
