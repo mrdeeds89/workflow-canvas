@@ -231,7 +231,7 @@ Design: `docs/AGENT-PROPOSALS.md`. It covers revision-bound proposals with a clo
 
 ## Running a workflow (plan only)
 
-Plan: `docs/RUN-PLAN.md`. Dom asked for this before agent-assisted editing. Hermes executes; Canvas records a human's run request and approvals; a Hermes-side, LLM-free conductor creates Kanban tasks stage by stage with idempotency keys. Nothing past an Approval card exists until Dom approves in Canvas, because Hermes 0.22.5 lets any Kanban-enabled profile unblock a card. Real-harness work waits for the access token's `approve` scope. The pilot runs under a single runner profile with no trading or money tools. Decisions R-D1 to R-D6 are open, and §3 changes the dispatch row of `docs/HERMES-INTEGRATION.md`, which still needs that thread's agreement. Nothing is built or installed.
+Plan: `docs/RUN-PLAN.md`. Dom asked for this before agent-assisted editing. Hermes executes; Canvas records a human's run request and approvals; a Hermes-side, LLM-free conductor creates Kanban tasks stage by stage with idempotency keys. Nothing past an Approval card exists until Dom approves in Canvas, because Hermes 0.22.5 lets any Kanban-enabled profile unblock a card. The pilot runs under a single runner profile with no trading or money tools. Dom decided R-D2, R-D4 (pilot without the login on a trusted network), R-D5 and R-D6 (branches supported); push vs pull (R-D1) and the pilot workflow (R-D3) are open. §3 changes the dispatch row of `docs/HERMES-INTEGRATION.md`, which still needs that thread's agreement. Nothing is built or installed.
 
 ## Next action
 

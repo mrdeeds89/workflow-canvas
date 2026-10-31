@@ -66,7 +66,7 @@ Dom clicks "Request run" ─▶ Canvas: preflight on the pinned revision ─▶ 
 1. Every card that would execute is `configured`: approved and every setup check done. This is the first time readiness has a hard consequence.
 2. No executing card has `inferred` or `assumption` set (the proposals design). A human has to clear those labels before the card's text becomes an agent's instructions.
 3. Every executing card names an executor profile from the harness's private allowlist (section 8).
-4. The graph uses only what the pilot supports: `requires` and `data` arrows, task, agent, integration and approval cards. A `conditional` arrow is refused with "branching is not supported in the pilot". `revision` arrows are explanatory and ignored. Note and artifact cards do not run.
+4. The graph uses only what the pilot supports: `requires`, `data` and `conditional` arrows, and task, agent, integration and approval cards. Branches follow section 12.1. `revision` arrows are explanatory and ignored. Note and artifact cards do not run.
 5. No requires cycle (already guaranteed by the validator).
 
 The preflight result is shown as a "What would run" panel: an ordered stage list, each card's executor and limits, and every refusal with the card it belongs to. That panel works with no harness connected.
@@ -98,7 +98,7 @@ A blocked Kanban card can be unblocked by an agent (section 1), so it cannot be 
 
 The gate then rests on two things, stated plainly:
 
-1. **Only Dom can write an approval record.** Today Canvas has no authentication, so any local process on the Canvas VM could post one. **Running therefore depends on the access token** (roadmap step 4), with a human-only `approve` scope that no agent key carries. Until that exists, slices R2+ stay on throwaway homes.
+1. **Only Dom can write an approval record.** Today Canvas has no authentication, so any local process on the Canvas VM could post one. **Enforcement therefore depends on the access token** (roadmap step 4), with a human-only `approve` scope that no agent key carries. Dom chose to pilot before that (R-D4), so in the pilot the gate is a convention bounded by the runner profile's limits.
 2. **The conductor is not an agent.** It is a fixed script with no model in the loop, so a prompt cannot talk it past a gate.
 
 What this does **not** stop: an agent on that harness with Kanban tools can always create unrelated tasks of its own. The gate guarantees that *this workflow* does not continue without Dom. It does not limit what the agent's profile can already do, which is why section 8 limits the profile.
@@ -144,7 +144,7 @@ Canvas does not install these. For each trigger it generates the exact `hermes c
 | **R1** | Run record, preflight, "What would run" panel, executor and skills fields on cards, frozen snapshot. No conductor, no harness | No |
 | **R2** | Conductor script and `run` exporter subcommand, tested against **throwaway Hermes homes** with a throwaway board. Dispatch is checked with `hermes kanban dispatch --dry-run` | Throwaway only |
 | **R3** | Access token with `approve` scope (shares roadmap step 4) | No |
-| **R4** | Pilot on the real harness: one non-financial, local-output workflow, manual start, one Approval card, the runner profile, no retries. Needs separate approval for the profile, board, keys, and cron job | **Yes, approved separately** |
+| **R4** | Pilot on the real harness, on a trusted network without the login (R-D4): one non-financial, local-output workflow, manual start, one Approval card, the runner profile, no retries. Can come before R3. Needs separate approval for the profile, board, keys, and cron job | **Yes, approved separately** |
 | **R5** | Triggers, one kind at a time | Yes, each approved |
 
 ## 11. Acceptance checks (R1–R4)
@@ -152,7 +152,8 @@ Canvas does not install these. For each trigger it generates the exact `hermes c
 - **Preflight**: refuses a proposed card, an unfinished setup check, an Assumption card, an unknown profile, a conditional arrow, and an unknown skill. Each refusal names its card. A clean graph lists stages in dependency order.
 - **Frozen revision**: edit the workflow after requesting a run; the run still compiles revision N with the same digest.
 - **Idempotency**: two pulls and a replayed request create each task exactly once (count tasks per key prefix).
-- **Gate**: nothing downstream of an Approval card exists on the board until an approval is recorded. Unblocking or creating tasks by hand does not make Canvas record an approval. Approval without the `approve` scope is refused (R3).
+- **Gate**: nothing downstream of an Approval card exists on the board until an approval is recorded. Unblocking or creating tasks by hand does not make Canvas record an approval. After R3, approval without the `approve` scope is refused.
+- **Branches**: per section 12.1.
 - **No money path**: the runner profile's resolved toolset contains no trading, payment, or messaging-delivery tool (`hermes -p <runner> tools list`, recorded).
 - **Cancel**: Stop run archives all pending tasks for the run and creates no new ones. A running attempt is shown as "finishing current attempt".
 - **Failure**: crashed, timed out, blocked, and gave up each show as their own category. None is shown as success. The run stops at the first failure.
@@ -160,13 +161,48 @@ Canvas does not install these. For each trigger it generates the exact `hermes c
 - **Evidence privacy**: a fixture task with a known body, comment, summary, and workspace path; none of those strings appears in exporter output, the Canvas database, or Canvas logs.
 - **Before/after on the real harness (R4)**: board task counts, cron list, and no new listeners, recorded before and after.
 
-## 12. Decisions needed
+## 12. Decisions
 
-- **R-D1.** Conductor on the harness pulls (A, recommended) or Canvas pushes (B)?
-- **R-D2.** Per-card executor: HANDOFF records "a Hermes agent or a script the canvas runs itself"; the roadmap later superseded the Canvas-run script. Confirm **Hermes only**: a script card runs as a Kanban worker or a Hermes `no_agent` cron script, never inside Canvas.
-- **R-D3.** Pilot workflow: which non-financial, local-output workflow? It should be one Dom actually wants, with one Approval card.
-- **R-D4.** Running waits for the access token (R3) before touching the real harness. Recommended: yes.
-- **R-D5.** Bring worker summaries back into Canvas, or categories only, as for cron error detail?
-- **R-D6.** Conditional branches: refused in the pilot (recommended), or the source card's worker chooses a branch and the conductor archives the other?
+Dom, 2026-10-31:
+
+- **R-D2. Hermes only.** A script card runs as a Kanban worker or a Hermes `no_agent` script. Canvas never runs code.
+- **R-D4. Pilot without the login, on a trusted network.** Consequence, stated plainly: until the access token exists, the approval gate is a Canvas UI convention, not an enforced control. Any process that can reach the Canvas API can record an approval or a run request. What still bounds a pilot run: the runner profile's toolset (section 8, no trading or money tools), the executor and skill allowlists, no retries, and the dedicated board. To keep that exposure small, the pilot keeps Canvas on loopback, reached through the SSH tunnel, rather than a LAN bind. Section 6's two-part gate becomes fully enforced only after R3.
+- **R-D5. Outcome only.** Completed, blocked, crashed, timed out, gave up. No summaries, comments, or error text leave the harness. The single exception is the branch choice in R-D6, which is a value from a fixed list, not text.
+- **R-D6. Branches are supported.** See section 12.1.
+
+Open:
+
+- **R-D1. Push or pull.** Dom leans towards Canvas pushing (option B), and asked how co-building with agents and then deploying to one or several agents on the same harness works best. That is answered in section 12.2. Not settled.
+- **R-D3. Pilot workflow.** Which non-financial, local-output workflow, with one Approval card.
+
+### 12.1 Branches (R-D6)
+
+A `conditional` arrow's label becomes one value of the source card's **branch list**, for example `pass` / `fail`. The source card's task body ends with a fixed instruction: report exactly one of those values as `metadata.branch` in `kanban_complete`. The exporter exports `branch` only when it matches the list exactly. Anything else becomes `unrecognized`.
+
+- The chosen branch's cards are created in the next stage. Cards reachable only through untaken branches are **never created**. The run shows them as "Skipped: branch `fail` not taken". Nothing is cancelled mid-flight, because nothing on an untaken path ever exists.
+- A missing or unrecognized branch value stops the run at that card ("Branch not reported"), and Dom decides.
+- A card reachable through both a taken and an untaken path runs once its taken path finishes. A card with a requires parent on an untaken path is skipped too, and the run view says which parent.
+- Preflight refuses a conditional source card with fewer than two labelled branches, duplicate labels, or a conditional arrow into an Approval card's downstream that would skip the approval.
+
+Acceptance adds: a fixture run per branch value, plus missing, unrecognized, and multiple values; each branch creates only its own cards, and skipped cards never appear on the board.
+
+### 12.2 Co-building, then deploying to one or several agents (R-D1)
+
+Two separate things, often conflated:
+
+- **Co-building** is the design side: Dom and agents shape the workflow through reviewed proposals (`docs/AGENT-PROPOSALS.md`). No harness is involved.
+- **Deploying to one or several agents** is per card. Each card names its executor profile (`--assignee`). One workflow can therefore use several agents on the same harness: a researcher card, a writer card, and a reviewer card can each go to a different profile on one board. Kanban hands each parent's outcome to its children. The executor allowlist decides which profiles a run may use. Nothing extra is needed for "multiple agents"; it is just different assignees.
+
+Push versus pull changes only who turns approved stages into tasks:
+
+| | A. Pull (harness conductor) | B. Push (Canvas sends) |
+|---|---|---|
+| Credential | Harness reads from Canvas; Canvas holds nothing that starts work | Canvas holds a forced-command key that can create tasks on the board |
+| With no login (R-D4) | A process that reaches Canvas can request a run, which the conductor will act on | The same, plus anything that compromises Canvas can start work directly |
+| Latency | Up to one minute per stage | Immediate |
+| Moving parts | A cron job on the harness, plus a key on the Canvas VM | A key on the harness; the logic lives in Canvas |
+| Several harnesses later | Each runs its own conductor | Canvas holds one key per harness |
+
+Either option uses the same compile, stage, idempotency, and allowlist rules, so the choice can be revisited later. The recommendation stays A, because no login plus a Canvas-held work key doubles the exposure. B is workable if the harness-side command takes only a validated bundle naming allowlisted profiles and skills, and the bundle format is the same one A would use.
 
 Recording a decision is not approval to build or install anything.
