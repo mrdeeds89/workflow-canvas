@@ -172,6 +172,9 @@ Dom, 2026-10-31:
 - **R-D1. Pull (option A).** After the comparison in section 12.2, Dom chose pull as safer. The ownership row in `docs/HERMES-INTEGRATION.md` §1 is updated to match.
 - **R-D3. Practice workflow: an existing daily news-briefing cron job on one agent profile.** First as a visual map of that job (read-only; nothing on the harness changes), then a copy assigned to a second agent profile, to practise the review-and-request loop. The map and the copy live in the private preview database, not in this repository, and the job is not named here. The copy writes to a local file behind an Approval card instead of a chat delivery. Its topics include market news; it reads news and never trades.
 
+- **Delivery is selectable (2026-10-31).** A workflow's result goes to a target the user picks from what their Hermes can send to; the conductor sends it with `hermes send`, never the agent. See `docs/R2-PLAN.md` §4.
+- **Anyone can install and connect (2026-10-31).** One-time pairing and a conductor token replace the forced-command SSH key on the Canvas side; an installer creates a minimal runner profile, board and cron job. See `docs/R2-PLAN.md` §3 and §5.
+
 Still open: nothing for R1.
 
 ### 12.1 Branches (R-D6)

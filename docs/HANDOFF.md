@@ -251,7 +251,7 @@ Verified on the project VM, 2026-10-31, against the working tree, pinned image `
 
 Preview: rebuilt and restarted on 2026-10-31 after a backup in ignored `backups/`. All 7 existing workflows loaded as schema 4 and the bind is still loopback only. Two private practice workflows (a read-only map of an existing daily briefing job, and a copy assigned to a second agent profile) were seeded into the preview database only. Neither is in this repository.
 
-Next in the plan: R2, the conductor, feed and run view, against throwaway Hermes homes only. Plan and open decisions: `docs/R2-PLAN.md`. Not started.
+Next in the plan: R2, the conductor, feed and run view, against throwaway Hermes homes only. Plan and decisions: `docs/R2-PLAN.md` (revised 2026-10-31: selectable delivery through `hermes send`, pairing instead of SSH keys, an installer that creates a minimal runner profile). Not started.
 
 ## Next action
 
