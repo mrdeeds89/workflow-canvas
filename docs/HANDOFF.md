@@ -253,6 +253,8 @@ Preview: rebuilt and restarted on 2026-10-31 after a backup in ignored `backups/
 
 Next in the plan: R2, the conductor, feed and run view, against throwaway Hermes homes only. Plan and decisions: `docs/R2-PLAN.md` (revised 2026-10-31: selectable delivery through `hermes send`, pairing instead of SSH keys, an installer that creates a minimal runner profile). Not started.
 
+**Open conflict, waiting on Dom.** A parallel plan (untracked, `.hermes/plans/2026-10-31_131255-run-tracking-controlled-hermes-pilot.md`) requires a login before any pilot, recorded-evidence import and offline replay before execution, a one-shot adapter instead of Kanban, and a synthetic pilot with no delivery. That contradicts Dom's answers recorded here: pilot without the login on a trusted network, selectable delivery, and anyone can install. Its four design defects are accepted in `docs/R2-PLAN.md` §7a. Do not start R2.2 until Dom picks a direction.
+
 ## Next action
 
 Job evidence: review and commit the prototype, then, only with approval, install the exporter and one restricted key per profile on the first harness and run the three "not yet verified" checks above. Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run, then the access token and Compose hosting. The live preview still serves the previous `dist/web`; this commit does not rebuild or restart it. Do not add execution, skill import, a deployment workflow, or a non-loopback bind. Publishing the source is not a deployment. The refused browser-back URL mismatch remains a follow-up.

@@ -91,6 +91,17 @@ Per run: progress per stage, per-card badges labelled "reported by Kanban", per-
 - **No dispatch.** No gateway in the throwaway home; no worker is ever spawned.
 - **Install hygiene.** Dry-run lists every change; uninstall removes the cron job, config, and token.
 
+## 7a. Review findings to resolve before R2.2
+
+A parallel planning session (`.hermes/plans/2026-10-31_131255-run-tracking-controlled-hermes-pilot.md`, untracked) reviewed this design. These findings are accepted as defects in the plan above:
+
+1. **The conductor must trust only its own tasks.** Kanban workers get task-creation tools automatically. A worker could create a task with a later step's key, and a conductor that checks "a task with this key exists" would treat a gated step as done. Fix: the conductor keeps its own ledger of the task ids it created. A task under the run's key prefix that is not in that ledger is tampering; the run stops and the tampering is reported.
+2. **A profile's tool list is not a security boundary.** A runner with terminal or file tools runs as the Hermes user and can read other profiles' credentials (including messaging bot tokens) and the conductor token. "No messaging tools" does not prevent sending. Fix, to verify in R2.0: run workers through an isolated terminal backend (container) with no access to the Hermes home, or give the runner no terminal or file tools at all. If neither holds on the installed release, the pilot is limited to tool-free steps.
+3. **Reclaim can re-run an attempt.** `--max-retries 1` limits failure retries, not crash reclaim. Deliveries therefore need their own effect key, so the conductor sends each delivery at most once, checked against its ledger before `hermes send`.
+4. **Run evidence must be durable.** The R1 request table keeps 20 rows per workflow and is deleted with the workflow. Run reports go in a separate append-only store that is never auto-pruned.
+
+Unresolved conflicts with that plan (it requires a login before any pilot, evidence import and replay first, a one-shot adapter instead of Kanban, and no delivery) are put to Dom; see HANDOFF.
+
 ## 8. Decisions
 
 Dom, 2026-10-31:
