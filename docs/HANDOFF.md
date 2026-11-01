@@ -267,6 +267,27 @@ Next is **R2.2**: the model-free conductor process on the Hermes side (`harness/
 
 **Conflict resolved by Dom, 2026-10-31.** A parallel plan (untracked, `.hermes/plans/2026-10-31_131255-run-tracking-controlled-hermes-pilot.md`) proposed a login before any pilot, evidence import and replay first, a one-shot adapter, and no delivery. Dom kept his answers: no login for the pilot on a trusted network, selectable delivery, anyone can install, Kanban with several agents. He adopted that plan's safety fixes (`docs/R2-PLAN.md` §7a): workers cannot reach other profiles' credentials, and the first pilot delivers only to a local file or Hermes chat. That plan's other proposals are not adopted unless Dom revisits them.
 
+## Distribution planning (proposal, no code)
+
+`docs/DISTRIBUTION.md` and `docs/DESKTOP-PLUGIN-ASSESSMENT.md` were added as
+review proposals. No application code changed, nothing was built into the live
+preview, and nothing was committed, tagged, published, or exposed. Key findings:
+
+- The tracked tree holds no real private data; the only secret-like strings are
+  intentional negative fixtures in the harness tests. Private surfaces stay
+  gitignored and untracked.
+- Dependency/license review (61 installed packages): zero runtime third-party
+  dependencies; all licenses permissive and MIT-compatible; the only MPL-2.0
+  packages (`axe-core`, `lightningcss`) are build/test-time and ship nothing.
+- Hermes Desktop plugin: embedding the editor in-app is impossible as built
+  (`frame-ancestors 'self'`, no CORS, no SDK embedding API); the supported thin
+  plugin is an open-in-browser launcher via `ctx.os.openExternal`. Details and
+  the one caveat (in-app status needs a plugin Python backend) in the assessment.
+- Versioning is a real gap: version is `0.0.0`, no git tags. Proposed first tag
+  `v0.1.0`, with separate schema (5) and DB-layout numbers.
+
+The release checklist and remaining gaps are in `docs/DISTRIBUTION.md` §8.
+
 ## Next action
 
 Job evidence: review and commit the prototype, then, only with approval, install the exporter and one restricted key per profile on the first harness and run the three "not yet verified" checks above. Hands-on feedback on the details panel, sidebar, and brief is still open. Then trigger design, saved and not run, then the access token and Compose hosting. The live preview still serves the previous `dist/web`; this commit does not rebuild or restart it. Do not add execution, skill import, a deployment workflow, or a non-loopback bind. Publishing the source is not a deployment. The refused browser-back URL mismatch remains a follow-up.
