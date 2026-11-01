@@ -27,11 +27,16 @@ Probed with the real `hermes` 0.22.5 CLI against an isolated board; the real boa
 7. **`send --list` reads `channel_directory.json`, which a running gateway populates.** A profile home with no gateway run shows no targets. So the conductor reports targets from the gateway-populated directory; a freshly connected Hermes may show none until its gateway has run once.
 8. **`send --json` returns exit 0 even on error**, with the reason in an `error` field. The conductor must parse that field, not trust the exit code.
 9. **Worker credential isolation — the hard gate — is achievable with the Docker terminal backend.** `terminal.backend: docker` runs the worker in a namespace-isolated container. The default `local` backend does not stop a worker reading `~/.hermes/.env` or other profiles' tokens (deny rules block overwriting those files, not reading them), so "no messaging tools" alone is not isolation. R4 requires either the Docker backend with no mount of the Hermes home, or a runner with terminal/file toolsets disabled (tool-free steps only). If the installed host has no Docker and the step needs tools, the pilot cannot run that step.
+10. **Board isolation is a dedicated named board, not an env var (verified 2026-11-01, R2.2).** `--board <slug>` overrides `HERMES_KANBAN_DB`, and `HERMES_HOME` does not redirect the kanban home — both still resolve the real `~/.hermes/kanban`. A test that set `HERMES_KANBAN_DB` and passed `--board default` created a task on the *real* board (purged immediately). The only safe isolation is a named board (`hermes kanban boards create <slug>` → its own DB at `~/.hermes/kanban/boards/<slug>/kanban.db`). So the conductor must always target its own dedicated board, the installer must create it (R2.3), and tests isolate with a throwaway named board they create and `boards rm --delete`.
 
-**Open after R2.0 (for Dom or R2.1 design):**
+**Resolved by Dom, 2026-10-31:**
 
-- **Hermes-chat delivery.** Since `send` can't reach it, decide between cron `bot-chat` delivery, a session inject, or dropping "Hermes chat" and offering only messaging platforms plus local file in the first pilot. Dom asked for "local file or Hermes chat" first; local file is settled, Hermes chat is not.
-- **Target discovery timing.** Handle a connected Hermes whose `send --list` is still empty because its gateway has not run.
+- **Hermes-chat delivery:** not in the first pilot. Delivery targets are **Write to a local file** plus the messaging platforms from `hermes send --list`. Hermes-chat delivery is added later once its path is proven.
+- **Docker is required** for credential isolation. The pilot runner uses the Docker terminal backend; a host without Docker can only run tool-free steps. This is an accepted install requirement, not a blocker.
+
+**Still open (handle in R2.1 design, not blocking):**
+
+- **Target discovery timing.** Handle a connected Hermes whose `send --list` is still empty because its gateway has not run: show the local-file target and a "no messaging targets discovered yet" note.
 
 ## Pieces
 
@@ -92,7 +97,7 @@ Per run: progress per stage, per-card badges labelled "reported by Kanban", per-
 |---|---|---|
 | **R2.0** | **Done 2026-10-31.** Verified Kanban and `hermes send` facts on a throwaway board with no gateway; real board confirmed unchanged. | Findings recorded above |
 | **R2.1** | Bundle compiler, run state, approvals, reports, pairing and conductor-token routes, schema 5 `deliverTo`, preflight delivery checks. Node tests. | Claim-once, expiry stops at claim, the token cannot reach any other route, a used or expired pairing code is refused, unknown target refused |
-| **R2.2** | Conductor `tick` with a fake `hermes` (records argv, fake board), then against the real CLI and a throwaway home | §7 checks pass |
+| **R2.2** | **Done 2026-11-01.** Conductor `tick` built; 9 hermetic tests (stub Canvas + fake `hermes`) and a gated real-CLI test on a throwaway named board. | §7 checks pass |
 | **R2.3** | `install`, `uninstall`, `allow-*`, `status` against a throwaway home: dry-run output, each change, and clean removal | Install then uninstall leaves only the board; nothing outside the throwaway home changes |
 | **R2.4** | Canvas UI: Connect Hermes, the Deliver picker, and the run view, with a browser test against fixture reports | Approve opens the next stage; delivery choices come only from reported targets |
 | **R2.5** | Independent review, then docs, including a one-page "connect your Hermes" guide written for non-technical users | Review findings fixed or recorded |

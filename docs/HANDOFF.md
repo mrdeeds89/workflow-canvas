@@ -265,7 +265,11 @@ R2 is the conductor, connection, delivery and run view, against throwaway Hermes
 
 Decisions since: Hermes-chat delivery is **not** in the first pilot (local file + messaging platforms only); **Docker is required** for worker credential isolation (`docs/R2-PLAN.md` resolved section).
 
-Next is **R2.2**: the model-free conductor process on the Hermes side (`harness/hermes/workflow_canvas_conductor.py`, stdlib only, `-I`) — `tick` pulls bundles, keeps its own ledger of created task ids (trusts only its own tasks), creates stage tasks only when approvals/branches are in, sends due deliveries, archives on cancel/stop, reports outcome-only. Tested against a fake `hermes` first, then the real CLI on a throwaway `HERMES_KANBAN_DB` board. Then R2.3 installer, R2.4 UI (Connect Hermes, Deliver picker, run view), R2.5 review+docs.
+**R2.2 is built and green (2026-11-01).** Commit `bc0ce30`. `harness/hermes/workflow_canvas_conductor.py` (stdlib only, run with `-I`, never imports Hermes): one `tick` pass claims pending runs, keeps its own ledger of created task ids (trusts only its own tasks, so a worker-created task can't satisfy a gate), creates the steps behind an Approval card only after Canvas records a human approval, never creates behind a rejected approval or an untaken branch, refuses a run naming a disallowed profile/skill, sends each delivery at most once (local-file writes a file; messaging resolves the opaque target id to the real one it holds privately and parses the send JSON error), archives created tasks on cancel/stop, and reports outcome-only. Canvas gained a token-scoped `GET /api/conductor/run/:id` (status, cancel/stop, approvals only) and `RunStore.find`. Tests: `harness/hermes/tests/` — 9 hermetic tests (Python stub Canvas + `fake_hermes.py`, no node/docker/real Hermes) plus `test_conductor_real.py`, a gated real-CLI end-to-end (`WC_REAL_HERMES=1`) that creates a throwaway named board, runs a real tick, and deletes the board. All pass; 178 TS tests still green.
+
+**Critical isolation finding (R2.0 §finding 10):** `--board <slug>` overrides `HERMES_KANBAN_DB` and `HERMES_HOME` does not redirect the kanban home. The conductor must always target a dedicated named board; the R2.3 installer must create it with `hermes kanban boards create`. Tests isolate with a throwaway named board, never `--board default`.
+
+Next is **R2.3** (installer: create the runner profile, the dedicated named board, config mode 600, the every-1m `--no-agent` cron tick; dry-run + clean uninstall), then **R2.4** UI (Connect Hermes, Deliver picker, run view), then **R2.5** review+docs. No real harness is touched before R4.
 
 **Conflict resolved by Dom, 2026-10-31.** A parallel plan (untracked, `.hermes/plans/2026-10-31_131255-run-tracking-controlled-hermes-pilot.md`) proposed a login before any pilot, evidence import and replay first, a one-shot adapter, and no delivery. Dom kept his answers: no login for the pilot on a trusted network, selectable delivery, anyone can install, Kanban with several agents. He adopted that plan's safety fixes (`docs/R2-PLAN.md` §7a): workers cannot reach other profiles' credentials, and the first pilot delivers only to a local file or Hermes chat. That plan's other proposals are not adopted unless Dom revisits them.
 
@@ -289,6 +293,16 @@ preview, and nothing was committed, tagged, published, or exposed. Key findings:
   `v0.1.0`, with separate schema (5) and DB-layout numbers.
 
 The release checklist and remaining gaps are in `docs/DISTRIBUTION.md` §8.
+
+## Exploratory QA follow-up (2026-11-01)
+
+A dogfood walk of an existing complex review map was read-only; all editing tests used the existing disposable browser suite on the project VM. No application code, preview data, harness connection, or serving configuration changed. The selected document was byte-identical before/after. Private evidence stays ignored in `test-results/dogfood-20261101/`.
+
+Current verification on `4b91b05`: typecheck passed; **178 Node tests passed, 0 failed**; isolated browser build succeeded and its assets matched the served build. `bash scripts/editor-browser.sh` returned **23 passed, 1 failed**. The run-test seed in `test/editor-browser/runs.spec.mjs` omits schema-5 `deliverTo`, so validation rejects it before UI checks. The script exits before restart verification; do not carry forward an older restart pass as current evidence.
+
+Observed UI follow-ups: opening the brief and run panel leaves only about 64px for the canvas/details at 1485×840 and zero canvas height at 1280×720; inferred-arrow blockers lack navigation to their arrow; a phone-width layout overflows and the Theme label intercepts the sidebar-collapse control. Axe in Light/Dark also flags a missing h1 and appearance controls outside landmarks (best-practice findings, not full accessibility certification). Card/arrow keyboard selection, zoom/fit, sidebar navigation/Back, theme persistence and system-theme changes were exercised successfully. No uncaught page exceptions; the deliberately missing workflow produced its expected 404 and recovery message.
+
+Recommended next repair: preserve workspace height with review panels open, add arrow navigation from blockers, update the run fixture and rerun the full browser suite through restart. This audit did not authorize or implement those fixes.
 
 ## Next action
 
