@@ -94,10 +94,27 @@ function migrateV3ToV4(document: Record<string, unknown>): Record<string, unknow
   };
 }
 
+/**
+ * v4 -> v5
+ *
+ * Adds `deliverTo` to each card, empty. Migration never chooses a delivery
+ * target: where output goes is a human decision made against a connected
+ * Hermes.
+ */
+function migrateV4ToV5(document: Record<string, unknown>): Record<string, unknown> {
+  const nodes = Array.isArray(document.nodes) ? document.nodes : [];
+  return {
+    ...document,
+    schemaVersion: 5,
+    nodes: nodes.map((node) => (isRecord(node) ? { ...node, deliverTo: "" } : node)),
+  };
+}
+
 const MIGRATIONS: Record<number, (document: Record<string, unknown>) => Record<string, unknown>> = {
   1: migrateV1ToV2,
   2: migrateV2ToV3,
   3: migrateV3ToV4,
+  4: migrateV4ToV5,
 };
 
 /** Bring a stored document up to SCHEMA_VERSION, one step at a time. */

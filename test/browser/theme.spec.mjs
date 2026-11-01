@@ -7,7 +7,7 @@ async function seed(request) {
   const created = await request.post('/api/workflows', { data: { title: fixture.title } });
   expect(created.ok()).toBeTruthy();
   const doc = await created.json();
-  doc.nodes = fixture.nodes.map(n => ({ instructions: '', spec: '', inputs: [], outputs: [], acceptanceCriteria: [], inferred: false, run: { executor: '', skills: [], maxRuntimeMinutes: 30 }, ...n }));
+  doc.nodes = fixture.nodes.map(n => ({ instructions: '', spec: '', inputs: [], outputs: [], acceptanceCriteria: [], inferred: false, run: { executor: '', skills: [], maxRuntimeMinutes: 30 }, deliverTo: '', ...n }));
   doc.edges = fixture.edges.map(e => ({ inferred: false, ...e }));
   const saved = await request.put(`/api/workflows/${doc.id}`, { data: doc });
   expect(saved.ok()).toBeTruthy();

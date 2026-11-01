@@ -14,7 +14,7 @@ id="$(jq -r .id <<<"$created")"
 body="$(jq --slurpfile ex "$EXAMPLE" '
   .nodes = [$ex[0].nodes[] | {
       instructions: "", spec: "", inputs: [], outputs: [], acceptanceCriteria: [], inferred: false,
-      run: {executor: "", skills: [], maxRuntimeMinutes: 30}
+      run: {executor: "", skills: [], maxRuntimeMinutes: 30}, deliverTo: ""
     } + .]
   | .edges = [$ex[0].edges[] | {inferred: false} + .]
 ' <<<"$created")"

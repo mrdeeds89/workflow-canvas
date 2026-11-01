@@ -1,7 +1,7 @@
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** Versions this build can read. Older ones are migrated forward on load. */
-export const READABLE_SCHEMA_VERSIONS = [1, 2, 3, 4] as const;
+export const READABLE_SCHEMA_VERSIONS = [1, 2, 3, 4, 5] as const;
 
 /** Workflow brief length. Same bound as other stored prose fields. */
 export const MAX_BRIEF_LENGTH = 20_000;
@@ -100,6 +100,21 @@ export function defaultRunSettings(): RunSettings {
   return { executor: "", skills: [], maxRuntimeMinutes: DEFAULT_MAX_RUNTIME_MINUTES };
 }
 
+/**
+ * Where a run's output may be delivered. Messaging targets (Telegram, Discord,
+ * ...) are reported by the connected Hermes; `local-file` is built in and
+ * means the conductor writes the result to a file on the Hermes machine. A
+ * target id is opaque to Canvas; the real chat id stays on the Hermes side.
+ */
+export const LOCAL_FILE_TARGET = "local-file";
+export const MAX_DELIVER_TO = 128;
+
+export type DeliveryTarget = {
+  id: string;
+  label: string;
+  kind: "local-file" | "messaging";
+};
+
 /** True for a skill name that is safe to pass to Hermes as one argument. */
 export function isSkillName(value: string): boolean {
   return SKILL_PATTERN.test(value) && !value.split("/").some((part) => part === "." || part === "..");
@@ -130,6 +145,12 @@ export type WorkflowNode = {
   inferred: boolean;
   /** Run settings. Ignored for approval, artifact, and note cards. */
   run: RunSettings;
+  /**
+   * For an artifact card: the delivery target id for its output, or "" for
+   * none. Ignored on other card types. `local-file` or a harness messaging
+   * target id. Nothing is delivered until a run reaches this card.
+   */
+  deliverTo: string;
 };
 
 export type WorkflowEdge = {

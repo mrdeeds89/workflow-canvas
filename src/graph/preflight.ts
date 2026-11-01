@@ -1,4 +1,4 @@
-import type { NodeKind, WorkflowDefinition, WorkflowEdge, WorkflowNode } from "./types.ts";
+import { LOCAL_FILE_TARGET, type NodeKind, type WorkflowDefinition, type WorkflowEdge, type WorkflowNode } from "./types.ts";
 
 /**
  * "What would run": a pure check of a workflow against the run rules in
@@ -53,7 +53,19 @@ export type PlannedStage = {
   steps: PlannedStep[];
 };
 
-export type Allowlist = { executors: readonly string[]; skills: readonly string[] };
+export type Allowlist = {
+  executors: readonly string[];
+  skills: readonly string[];
+  /** Delivery target ids the connected harness reported; omit when none is connected. */
+  deliveryTargets?: readonly string[];
+};
+
+/**
+ * A result delivery a run will perform: an artifact card's output to a target
+ * id. `produces` is the run/approval cards whose output reaches this artifact
+ * (through other artifacts), i.e. what must finish before the delivery.
+ */
+export type PlannedDelivery = { cardId: string; targetId: string; produces: string[] };
 
 export type Preflight = {
   ok: boolean;
@@ -61,6 +73,8 @@ export type Preflight = {
   /** Not blocking. Explains what is ignored or not checked. */
   notices: string[];
   stages: PlannedStage[];
+  /** Deliveries this run would perform, one per artifact card with a target. */
+  deliveries: PlannedDelivery[];
 };
 
 const RUNS: ReadonlySet<NodeKind> = new Set(["task", "agent", "integration"]);
@@ -85,6 +99,7 @@ function name(card: WorkflowNode | undefined): string {
 export function preflight(definition: WorkflowDefinition, allowlist: Allowlist | null = null): Preflight {
   const issues: PreflightIssue[] = [];
   const notices: string[] = [];
+  const deliveries: PlannedDelivery[] = [];
   const cards = new Map(definition.nodes.map((card) => [card.id, card]));
 
   // Only edges between cards that take part. Notes never take part.
@@ -132,6 +147,29 @@ export function preflight(definition: WorkflowDefinition, allowlist: Allowlist |
         cardId: card.id,
         message: `${name(card)} is labelled Inferred. A person has to confirm it before its text becomes an agent's instructions.`,
       });
+    }
+    if (card.deliverTo !== "") {
+      if (role !== "artifact") {
+        issues.push({
+          code: "delivery_on_non_artifact",
+          cardId: card.id,
+          message: `${name(card)} has a delivery target, but only an artifact card can deliver a result. Move the delivery to an artifact card.`,
+        });
+      } else if (incoming.get(card.id)!.length === 0) {
+        issues.push({
+          code: "delivery_without_producer",
+          cardId: card.id,
+          message: `${name(card)} delivers a result but nothing feeds into it. Connect the step that produces this output.`,
+        });
+      } else if (allowlist?.deliveryTargets && card.deliverTo !== LOCAL_FILE_TARGET && !allowlist.deliveryTargets.includes(card.deliverTo)) {
+        issues.push({
+          code: "delivery_target_unknown",
+          cardId: card.id,
+          message: `${name(card)} delivers to a target the connected Hermes no longer offers. Pick the delivery again.`,
+        });
+      } else {
+        deliveries.push({ cardId: card.id, targetId: card.deliverTo, produces: [] });
+      }
     }
     if (role === "artifact") continue;
     if (card.readiness !== "configured") {
@@ -221,7 +259,7 @@ export function preflight(definition: WorkflowDefinition, allowlist: Allowlist |
   const order = topologicalOrder(active.map((card) => card.id), deps);
   if (order === null) {
     issues.push({ code: "dependency_cycle", message: "The arrows that carry work forward form a loop, so no step could start." });
-    return { ok: false, issues, notices, stages: [] };
+    return { ok: false, issues, notices, stages: [], deliveries };
   }
 
   // Stage, branch requirements, and nearest running/approval ancestors.
@@ -264,6 +302,11 @@ export function preflight(definition: WorkflowDefinition, allowlist: Allowlist |
     stage.set(id, level);
     branches.set(id, required);
     waitsFor.set(id, parents);
+  }
+  // Now that upstream run/approval ancestors are known, tell each delivery
+  // which steps produce the output it sends.
+  for (const delivery of deliveries) {
+    delivery.produces = [...(waitsFor.get(delivery.cardId) ?? new Set<string>())];
   }
   // Which gates open each stage.
   // Looks through artifact cards, like waitsFor does.
@@ -324,7 +367,7 @@ export function preflight(definition: WorkflowDefinition, allowlist: Allowlist |
     notices.push("No harness conductor is configured, so profile and skill names are not checked against a harness allowlist.");
   }
 
-  return { ok: issues.length === 0, issues, notices, stages };
+  return { ok: issues.length === 0, issues, notices, stages, deliveries };
 }
 
 function add(map: Map<string, Set<string>>, key: string, value: string): void {

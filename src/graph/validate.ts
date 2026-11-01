@@ -1,6 +1,7 @@
 import {
   DESIGN_TIME_READINESS,
   EXECUTOR_PATTERN,
+  MAX_DELIVER_TO,
   MAX_RUNTIME_MINUTES,
   MAX_SKILLS,
   RUN_EVIDENCE_READINESS,
@@ -182,6 +183,7 @@ function parseNode(value: unknown, path: string, issues: ValidationIssue[]): Wor
     !finiteNumber(position.y) ||
     !OWNERS.has(value.owner as Owner) ||
     !isText(value.instructions, 20_000) ||
+    !isText(value.deliverTo, MAX_DELIVER_TO) ||
     !Array.isArray(value.inputs) ||
     !Array.isArray(value.outputs) ||
     !Array.isArray(value.setup) ||
@@ -231,6 +233,7 @@ function parseNode(value: unknown, path: string, issues: ValidationIssue[]): Wor
     instructions: value.instructions as string,
     spec,
     readiness: deriveReadiness(readiness, setup),
+    deliverTo: value.deliverTo as string,
     proposal,
     setup,
     inputs,

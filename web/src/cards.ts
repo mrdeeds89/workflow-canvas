@@ -57,6 +57,7 @@ export function newCard(kind: NodeKind, position: { x: number; y: number }): Wor
     acceptanceCriteria: [],
     inferred: false,
     run: defaultRunSettings(),
+    deliverTo: "",
   };
 }
 

@@ -122,7 +122,7 @@ export function createRunStore(db: DatabaseSync): RunStore {
       try {
         plan = JSON.parse(row.plan) as Preflight;
       } catch {
-        plan = { ok: false, issues: [], notices: ["The stored plan could not be read."], stages: [] };
+        plan = { ok: false, issues: [], notices: ["The stored plan could not be read."], stages: [], deliveries: [] };
       }
       return { ...view(row, now), plan };
     },
