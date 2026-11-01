@@ -23,6 +23,12 @@ type Props = {
 
 const STATUS: Record<RunView["status"], string> = {
   requested: "Requested, waiting for a conductor",
+  claimed: "Claimed by the conductor",
+  running: "Running",
+  "waiting-approval": "Waiting for approval",
+  completed: "Completed",
+  failed: "Failed",
+  stopped: "Stopped",
   expired: "Expired, never picked up",
   cancelled: "Cancelled",
 };

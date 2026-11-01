@@ -300,7 +300,7 @@ async function handle(
     return refreshJob(res, store, harness, id);
   }
 
-  const runsMatch = /^\/api\/workflows\/([^/]+)\/runs(?:\/([^/]+)(\/cancel)?)?$/.exec(path);
+  const runsMatch = /^\/api\/workflows\/([^/]+)\/runs(?:\/([^/]+)(\/cancel|\/approvals)?)?$/.exec(path);
   if (runsMatch) {
     const id = pathId(runsMatch[1]!);
     if (id === null) return sendError(res, 400, "bad_request", "The workflow id is not valid.");
@@ -318,8 +318,71 @@ async function handle(
       if (!detail) return sendError(res, 404, "not_found", "No such run request.");
       return sendJson(res, 200, detail);
     }
+    if (runsMatch[3] === "/approvals") {
+      if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+      return approveRun(req, res, store, harness, id, runId);
+    }
     if (method !== "POST") return methodNotAllowed(res, ["POST"]);
     return cancelRun(res, store, harness, id, runId);
+  }
+
+  // Connecting a Hermes machine. Canvas-facing; on a trusted network without a
+  // login yet (R-D4). The conductor token is issued only via /api/conductor/pair.
+  if (path === "/api/connect") {
+    if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+    return sendJson(res, 201, store.conductor.startPairing(harness.now()));
+  }
+  if (path === "/api/connection") {
+    if (method === "GET") {
+      const conn = store.conductor.connection();
+      return sendJson(res, 200, { connected: conn !== null, createdAt: conn?.createdAt ?? null, targets: store.conductor.offeredTargets() });
+    }
+    if (method === "DELETE") {
+      store.conductor.revoke();
+      res.writeHead(204, { "cache-control": "no-store" });
+      res.end();
+      return;
+    }
+    return methodNotAllowed(res, ["GET", "DELETE"]);
+  }
+  if (path === "/api/delivery-targets") {
+    if (method !== "GET") return methodNotAllowed(res, ["GET"]);
+    return sendJson(res, 200, { targets: store.conductor.offeredTargets() });
+  }
+
+  // The conductor's own routes. Everything but the pairing exchange needs the
+  // conductor token, and the token is accepted on no other route.
+  if (path === "/api/conductor/pair") {
+    if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+    return pairConductor(req, res, store, harness);
+  }
+  if (path === "/api/conductor" || path.startsWith("/api/conductor/")) {
+    const connectionId = store.conductor.verifyToken(bearerToken(req));
+    if (connectionId === null) return sendError(res, 401, "unauthorized", "A valid conductor token is required.");
+    if (path === "/api/conductor/pending") {
+      if (method !== "GET") return methodNotAllowed(res, ["GET"]);
+      return sendJson(res, 200, { runs: store.runs.pending(harness.now()), serverNow: harness.now() });
+    }
+    if (path === "/api/conductor/targets") {
+      if (method !== "PUT") return methodNotAllowed(res, ["PUT"]);
+      return setConductorTargets(req, res, store, connectionId);
+    }
+    const claimMatch = /^\/api\/conductor\/claim\/([^/]+)$/.exec(path);
+    if (claimMatch) {
+      if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+      const runId = pathId(claimMatch[1]!);
+      if (runId === null) return sendError(res, 400, "bad_request", "The run id is not valid.");
+      const won = store.runs.claim(runId, harness.now());
+      return sendJson(res, won ? 200 : 409, { claimed: won });
+    }
+    const reportMatch = /^\/api\/conductor\/report\/([^/]+)$/.exec(path);
+    if (reportMatch) {
+      if (method !== "POST") return methodNotAllowed(res, ["POST"]);
+      const runId = pathId(reportMatch[1]!);
+      if (runId === null) return sendError(res, 400, "bad_request", "The run id is not valid.");
+      return reportRun(req, res, store, harness, runId);
+    }
+    return sendError(res, 404, "not_found", "No such route.");
   }
 
   const match = /^\/api\/workflows\/([^/]+)$/.exec(path);
@@ -587,7 +650,8 @@ async function saveWorkflow(
 function runsView(store: WorkflowStore, harness: Harness, id: string) {
   return {
     runs: store.runs.list(id, harness.now()),
-    conductor: "none" as const,
+    conductor: store.conductor.connection() !== null ? ("connected" as const) : ("none" as const),
+    targets: store.conductor.offeredTargets(),
     requestTtlMs: REQUEST_TTL_MS,
     serverNow: harness.now(),
   };
@@ -628,9 +692,79 @@ async function requestRun(
       })),
     );
   }
+  if (store.conductor.connection() !== null) {
+    const offered = new Set(store.conductor.offeredTargets().map((target) => target.id));
+    const unknown = plan.deliveries.filter((delivery) => !offered.has(delivery.targetId));
+    if (unknown.length > 0) {
+      return sendError(
+        res,
+        422,
+        "delivery_target_unknown",
+        "A delivery points at a target the connected Hermes no longer offers. Choose the delivery again.",
+        unknown.map((delivery) => ({ code: "delivery_target_unknown", path: `card:${delivery.cardId}`, message: "This delivery target is not offered by the connected Hermes." })),
+      );
+    }
+  }
   const detail = store.runs.request(current, plan, now);
   res.setHeader("location", `/api/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(detail.id)}`);
   sendJson(res, 201, detail);
+}
+
+function bearerToken(req: IncomingMessage): string {
+  const header = req.headers.authorization;
+  if (typeof header !== "string") return "";
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match ? match[1]!.trim() : "";
+}
+
+async function approveRun(
+  req: IncomingMessage,
+  res: ServerResponse,
+  store: WorkflowStore,
+  harness: Harness,
+  id: string,
+  runId: string,
+): Promise<void> {
+  const now = harness.now();
+  if (!store.runs.get(id, runId, now)) return sendError(res, 404, "not_found", "No such run request.");
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  if (!isRecord(body.value) || typeof body.value.cardId !== "string" || (body.value.decision !== "approved" && body.value.decision !== "rejected")) {
+    return sendError(res, 422, "invalid", "An approval names a cardId and a decision of 'approved' or 'rejected'.");
+  }
+  const approval = store.runs.approve(id, runId, body.value.cardId, body.value.decision, now);
+  if (!approval) return sendError(res, 404, "not_found", "No such run request.");
+  sendJson(res, 200, approval);
+}
+
+async function pairConductor(req: IncomingMessage, res: ServerResponse, store: WorkflowStore, harness: Harness): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  if (!isRecord(body.value) || typeof body.value.code !== "string") {
+    return sendError(res, 422, "invalid", "Send the pairing code shown in Canvas.");
+  }
+  const result = store.conductor.redeemPairing(body.value.code, harness.now());
+  if (!result) return sendError(res, 403, "pairing_failed", "That pairing code is not valid, has expired, or was already used.");
+  sendJson(res, 201, result);
+}
+
+async function setConductorTargets(req: IncomingMessage, res: ServerResponse, store: WorkflowStore, connectionId: string): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  const targets = isRecord(body.value) ? body.value.targets : undefined;
+  if (!store.conductor.setTargets(connectionId, targets)) {
+    return sendError(res, 422, "invalid", "Targets must be a list of { id, label, kind: 'messaging' }.");
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+async function reportRun(req: IncomingMessage, res: ServerResponse, store: WorkflowStore, harness: Harness, runId: string): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!body.ok) return sendError(res, body.status, body.code, body.message);
+  if (!store.runs.report(runId, body.value, harness.now())) {
+    return sendError(res, 422, "invalid_report", "The report is not a valid outcome-only report, or the run does not exist.");
+  }
+  sendJson(res, 200, { ok: true });
 }
 
 function cancelRun(res: ServerResponse, store: WorkflowStore, harness: Harness, id: string, runId: string): void {
