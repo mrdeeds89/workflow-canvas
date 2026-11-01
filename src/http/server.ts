@@ -367,6 +367,23 @@ async function handle(
       if (method !== "PUT") return methodNotAllowed(res, ["PUT"]);
       return setConductorTargets(req, res, store, connectionId);
     }
+    const runMatch = /^\/api\/conductor\/run\/([^/]+)$/.exec(path);
+    if (runMatch) {
+      if (method !== "GET") return methodNotAllowed(res, ["GET"]);
+      const runId = pathId(runMatch[1]!);
+      if (runId === null) return sendError(res, 400, "bad_request", "The run id is not valid.");
+      const found = store.runs.find(runId, harness.now());
+      if (!found) return sendError(res, 404, "not_found", "No such run.");
+      // Gate inputs only: status, whether it was cancelled/stopped, and the human
+      // approvals. No workflow text, card bodies, or report payloads.
+      return sendJson(res, 200, {
+        runId,
+        status: found.status,
+        cancelled: found.status === "cancelled",
+        stopped: found.status === "stopped",
+        approvals: found.approvals.map((approval) => ({ cardId: approval.cardId, decision: approval.decision })),
+      });
+    }
     const claimMatch = /^\/api\/conductor\/claim\/([^/]+)$/.exec(path);
     if (claimMatch) {
       if (method !== "POST") return methodNotAllowed(res, ["POST"]);

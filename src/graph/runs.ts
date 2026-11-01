@@ -33,6 +33,8 @@ export type RunStore = {
   active(workflowId: string, now: number): RunView | null;
   list(workflowId: string, now: number): RunView[];
   get(workflowId: string, runId: string, now: number): RunDetail | null;
+  /** Look a run up by its id alone (the conductor does not know the workflow id). */
+  find(runId: string, now: number): RunDetail | null;
   /** The frozen document a run was requested for. */
   snapshot(workflowId: string, runId: string): WorkflowDefinition | null;
   cancel(workflowId: string, runId: string, now: number): RunView | null;
@@ -246,6 +248,10 @@ export function createRunStore(db: DatabaseSync): RunStore {
     },
     get(workflowId, runId, now) {
       const row = one.get(workflowId, runId) as RunRow | undefined;
+      return row ? detail(row, now) : null;
+    },
+    find(runId, now) {
+      const row = byId.get(runId) as RunRow | undefined;
       return row ? detail(row, now) : null;
     },
     snapshot(workflowId, runId) {
