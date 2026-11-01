@@ -11,7 +11,7 @@ const RUN = { executor: "", skills: [], maxRuntimeMinutes: 30 };
 function card(id, title, overrides = {}) {
   return {
     id, title, description: "", type: "task", position: { x: 0, y: 0 }, owner: "agent",
-    instructions: `Do ${title}.`, spec: "", readiness: "configured",
+    instructions: `Do ${title}.`, spec: "", readiness: "configured", deliverTo: "",
     proposal: { agentOwns: [], youOwn: [] }, setup: [], inputs: [], outputs: [], acceptanceCriteria: [],
     inferred: false, run: RUN, ...overrides,
   };
