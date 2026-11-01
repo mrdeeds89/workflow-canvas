@@ -14,6 +14,7 @@ import {
 // The same link rule the server enforces, so the panel and server agree.
 import { isSafeLink } from "../../src/graph/validate.ts";
 import { CARD_KINDS, EDGE_LABEL, READINESS_LABEL, makeId, runsAsStep } from "./cards.ts";
+import { fetchDeliveryTargets, type DeliveryTarget } from "./api.ts";
 
 const EDGE_KINDS: readonly { kind: EdgeKind; hint: string }[] = [
   { kind: "requires", hint: "The next step waits for this one to finish." },
@@ -76,6 +77,10 @@ export function CardDetails({ card, onChange, onDelete, onClose }: CardDetailsPr
           ))}
         </select>
       </Field>
+
+      {card.type === "artifact" && (
+        <DeliverSection deliverTo={card.deliverTo} onChange={(deliverTo) => set({ deliverTo })} />
+      )}
 
       {!isNote && (
         <>
@@ -142,6 +147,51 @@ function StatusSection({ card, onChange }: Pick<CardDetailsProps, "card" | "onCh
           ? "Configured turns on by itself when every setup check is ticked, and off again if one is unticked."
           : "Proposed means drafted but not yet approved. Approving it lets the setup checklist decide when it is configured."}
       </p>
+    </Section>
+  );
+}
+
+// ----------------------------------------------------------- delivery
+
+/**
+ * Where an artifact card's output is delivered. The list comes from the
+ * connected Hermes (local file is always offered); the conductor, not the
+ * canvas, performs the send. Picking nothing keeps the output in the run only.
+ */
+function DeliverSection({ deliverTo, onChange }: { deliverTo: string; onChange: (deliverTo: string) => void }) {
+  const [targets, setTargets] = useState<DeliveryTarget[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchDeliveryTargets()
+      .then((list) => live && setTargets(list))
+      .catch(() => live && setError("Could not load delivery targets from Hermes."));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const offered = targets ?? [];
+  const staleSelection = deliverTo !== "" && !offered.some((target) => target.id === deliverTo);
+  return (
+    <Section title="Deliver this output">
+      <p className="hint">
+        Where this result is sent once a run reaches this card. The connected Hermes sends it; the canvas never does.
+      </p>
+      <Field label="Send to">
+        <select className="input" value={deliverTo} onChange={(event) => onChange(event.target.value)} aria-label="Delivery target">
+          <option value="">Don't deliver</option>
+          {offered.map((target) => (
+            <option key={target.id} value={target.id}>
+              {target.label}
+            </option>
+          ))}
+          {staleSelection && <option value={deliverTo}>{deliverTo} (not offered now)</option>}
+        </select>
+      </Field>
+      {error && <p className="field-error">{error}</p>}
+      {targets && offered.length <= 1 && (
+        <p className="hint">Only a local file is available until a Hermes with messaging targets is connected.</p>
+      )}
     </Section>
   );
 }

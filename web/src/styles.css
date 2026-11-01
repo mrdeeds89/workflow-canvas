@@ -1269,3 +1269,24 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
   background: var(--warn-bg);
   color: var(--warn-text);
 }
+
+/* --- R2.4: connect panel + run view --------------------------------------- */
+.connect__code { margin-top: 0.6rem; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 6px; }
+.connect__code-value { display: inline-block; font-size: 1.4rem; letter-spacing: 0.15em; padding: 0.2rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; }
+.connect__targets { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.connect__actions { margin-top: 0.6rem; }
+.connect__pair { margin-top: 0.4rem; }
+
+.runplan__runs { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.runplan__run { border-top: 1px solid var(--border); padding: 0.4rem 0; }
+.runplan__run-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.runplan__run-toggle { flex: 1; text-align: left; background: none; border: none; color: inherit; cursor: pointer; padding: 0.2rem 0; }
+.runbadge { display: inline-block; padding: 0.05rem 0.4rem; border-radius: 10px; border: 1px solid var(--border); font-size: 0.85em; }
+.runbadge--completed { border-color: var(--kind-artifact); }
+.runbadge--running, .runbadge--claimed, .runbadge--waiting-approval { border-color: var(--kind-agent); }
+.runbadge--failed, .runbadge--blocked { border-color: var(--edge-revision); }
+.runplan__detail { padding: 0.4rem 0 0.2rem 1.2rem; }
+.runplan__detail-card, .runplan__approval, .runplan__delivery { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0; flex-wrap: wrap; }
+.runplan__approvals, .runplan__deliveries { margin-top: 0.5rem; }
+.runplan__approvals h4, .runplan__deliveries h4 { margin: 0.3rem 0; font-size: 0.9em; }
+.runplan__approval-actions { display: inline-flex; gap: 0.3rem; }

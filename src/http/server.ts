@@ -788,8 +788,10 @@ function cancelRun(res: ServerResponse, store: WorkflowStore, harness: Harness, 
   const now = harness.now();
   const before = store.runs.get(id, runId, now);
   if (!before) return sendError(res, 404, "not_found", "No such run request.");
-  if (before.status !== "requested") {
-    return sendError(res, 409, "run_not_open", `This request is already ${before.status}.`);
+  // Cancel a request, or stop a run already under way. Only a finished run is refused.
+  const terminal = ["completed", "failed", "stopped", "cancelled", "expired"];
+  if (terminal.includes(before.status)) {
+    return sendError(res, 409, "run_not_open", `This run is already ${before.status}.`);
   }
   sendJson(res, 200, store.runs.cancel(id, runId, now));
 }

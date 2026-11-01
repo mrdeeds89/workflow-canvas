@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { preflight, type PlannedStage } from "../../src/graph/preflight.ts";
-import type { RunView } from "../../src/graph/run-types.ts";
+import type { RunDetail, RunStepOutcome, RunView } from "../../src/graph/run-types.ts";
 import type { WorkflowDefinition } from "../../src/graph/types.ts";
-import { ApiError, cancelRun, fetchRuns, requestRun, type RunsListing } from "./api.ts";
+import { ApiError, approveRun, cancelRun, fetchRun, fetchRuns, requestRun, type RunsListing } from "./api.ts";
 
 /**
  * "What would run": the run rules applied to the canvas as it is now.
@@ -97,6 +97,19 @@ export function RunPanel({ workflowId, definition, settle, onSelectCard, onClose
     }
   };
 
+  const onApprove = async (runId: string, cardId: string, decision: "approved" | "rejected") => {
+    setBusy(true);
+    setError(null);
+    try {
+      await approveRun(workflowId, runId, cardId, decision);
+      await reload();
+    } catch (failure) {
+      setError(messageOf(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="harness runplan" aria-label="What would run">
       <div className="brief__head">
@@ -163,7 +176,14 @@ export function RunPanel({ workflowId, definition, settle, onSelectCard, onClose
 
         <div>
           <Stages stages={plan.stages} titleOf={titleOf} />
-          <RunList runs={listing?.runs ?? []} busy={busy} onCancel={(id) => void onCancel(id)} />
+          <RunList
+            runs={listing?.runs ?? []}
+            workflowId={workflowId}
+            busy={busy}
+            titleOf={titleOf}
+            onCancel={(id) => void onCancel(id)}
+            onApprove={(runId, cardId, decision) => void onApprove(runId, cardId, decision)}
+          />
         </div>
       </div>
     </section>
@@ -215,36 +235,170 @@ function Stages({ stages, titleOf }: { stages: PlannedStage[]; titleOf: (id: str
   );
 }
 
-function RunList({ runs, busy, onCancel }: { runs: RunView[]; busy: boolean; onCancel: (id: string) => void }) {
+const TERMINAL = new Set<RunView["status"]>(["completed", "failed", "stopped", "cancelled", "expired"]);
+
+type RunListProps = {
+  runs: RunView[];
+  workflowId: string;
+  busy: boolean;
+  titleOf: (id: string) => string;
+  onCancel: (id: string) => void;
+  onApprove: (runId: string, cardId: string, decision: "approved" | "rejected") => void;
+};
+
+function RunList({ runs, workflowId, busy, titleOf, onCancel, onApprove }: RunListProps) {
+  const [open, setOpen] = useState<string | null>(null);
   if (runs.length === 0) return <p className="harness__muted">No run requests yet.</p>;
   return (
-    <table className="harness__runs" aria-label="Run requests">
-      <thead>
-        <tr>
-          <th scope="col">Status</th>
-          <th scope="col">Revision</th>
-          <th scope="col">Requested</th>
-          <th scope="col">Steps</th>
-          <th scope="col" />
-        </tr>
-      </thead>
-      <tbody>
-        {runs.map((run) => (
-          <tr key={run.id}>
-            <td>{STATUS[run.status]}</td>
-            <td>{run.revision}</td>
-            <td>{new Date(run.requestedAt).toLocaleString()}</td>
-            <td>{run.stepCount}</td>
-            <td>
-              {run.status === "requested" && (
+    <ul className="runplan__runs" aria-label="Runs">
+      {runs.map((run) => {
+        const active = !TERMINAL.has(run.status);
+        const expanded = open === run.id;
+        return (
+          <li key={run.id} className="runplan__run">
+            <div className="runplan__run-head">
+              <button
+                type="button"
+                className="runplan__run-toggle"
+                aria-expanded={expanded}
+                onClick={() => setOpen(expanded ? null : run.id)}
+              >
+                {expanded ? "▾" : "▸"} <span className={`runbadge runbadge--${run.status}`}>{STATUS[run.status]}</span>
+                <span className="harness__muted"> · rev {run.revision} · {run.stepCount} steps</span>
+              </button>
+              {active && (
                 <button type="button" disabled={busy} onClick={() => onCancel(run.id)}>
-                  Cancel
+                  {run.status === "requested" ? "Cancel" : "Stop"}
                 </button>
               )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+            </div>
+            {expanded && (
+              <RunDetailView
+                workflowId={workflowId}
+                runId={run.id}
+                titleOf={titleOf}
+                busy={busy}
+                canApprove={active}
+                onApprove={onApprove}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+const OUTCOME_LABEL: Record<RunStepOutcome["status"], string> = {
+  created: "created",
+  running: "running",
+  completed: "done",
+  failed: "failed",
+  blocked: "blocked",
+  "timed-out": "timed out",
+  "gave-up": "gave up",
+};
+
+/** One run's reported detail: per-card outcomes, approvals, and deliveries. */
+function RunDetailView({
+  workflowId,
+  runId,
+  titleOf,
+  busy,
+  canApprove,
+  onApprove,
+}: {
+  workflowId: string;
+  runId: string;
+  titleOf: (id: string) => string;
+  busy: boolean;
+  canApprove: boolean;
+  onApprove: (runId: string, cardId: string, decision: "approved" | "rejected") => void;
+}) {
+  const [detail, setDetail] = useState<RunDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchRun(workflowId, runId)
+      .then((value) => live && setDetail(value))
+      .catch((failure) => live && setError(messageOf(failure)));
+    return () => {
+      live = false;
+    };
+  }, [workflowId, runId, busy]);
+
+  if (error) return <p className="harness__error">{error}</p>;
+  if (!detail) return <p className="harness__muted">Loading run…</p>;
+
+  const outcomeOf = new Map((detail.outcomes?.steps ?? []).map((step) => [step.cardId, step]));
+  const decisionOf = new Map(detail.approvals.map((approval) => [approval.cardId, approval.decision]));
+  const approvalCards = detail.plan.stages.flatMap((stage) => stage.steps).filter((step) => step.role === "approval");
+  const deliveries = detail.outcomes?.deliveries ?? [];
+
+  return (
+    <div className="runplan__detail">
+      <div className="runplan__detail-cards">
+        {detail.plan.stages.flatMap((stage) => stage.steps).map((step) => {
+          const outcome = outcomeOf.get(step.cardId);
+          return (
+            <div key={step.cardId} className="runplan__detail-card">
+              <span className="runplan__step-title">{titleOf(step.cardId)}</span>
+              {step.role === "approval" ? (
+                <span className="harness__muted"> · approval</span>
+              ) : outcome ? (
+                <span className={`runbadge runbadge--${outcome.status}`}>
+                  {OUTCOME_LABEL[outcome.status]}
+                  {outcome.branch ? ` · branch "${outcome.branch}"` : ""} · reported by Kanban
+                </span>
+              ) : (
+                <span className="harness__muted"> · not created yet</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {approvalCards.length > 0 && (
+        <div className="runplan__approvals">
+          <h4>Approvals</h4>
+          {approvalCards.map((step) => {
+            const decision = decisionOf.get(step.cardId);
+            return (
+              <div key={step.cardId} className="runplan__approval">
+                <span className="runplan__step-title">{titleOf(step.cardId)}</span>
+                {decision ? (
+                  <span className={`runbadge runbadge--${decision === "approved" ? "completed" : "failed"}`}>{decision}</span>
+                ) : canApprove ? (
+                  <span className="runplan__approval-actions">
+                    <button type="button" disabled={busy} onClick={() => onApprove(runId, step.cardId, "approved")}>
+                      Approve
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => onApprove(runId, step.cardId, "rejected")}>
+                      Reject
+                    </button>
+                  </span>
+                ) : (
+                  <span className="harness__muted">not decided</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {deliveries.length > 0 && (
+        <div className="runplan__deliveries">
+          <h4>Deliveries</h4>
+          {deliveries.map((delivery) => (
+            <div key={delivery.cardId} className="runplan__delivery">
+              <span className="runplan__step-title">{titleOf(delivery.cardId)}</span>
+              <span className={`runbadge runbadge--${delivery.status === "sent" ? "completed" : delivery.status === "failed" ? "failed" : "created"}`}>
+                {delivery.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

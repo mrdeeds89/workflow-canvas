@@ -1,7 +1,9 @@
 import type { Library, ProjectSummary } from "../../src/graph/library.ts";
-import type { ValidationIssue, WorkflowDefinition } from "../../src/graph/types.ts";
+import type { DeliveryTarget, ValidationIssue, WorkflowDefinition } from "../../src/graph/types.ts";
 import type { LinkView, StoredObservation, Thresholds } from "../../src/harness/observation.ts";
-import type { RunDetail, RunView } from "../../src/graph/run-types.ts";
+import type { RunApproval, RunDetail, RunView } from "../../src/graph/run-types.ts";
+
+export type { DeliveryTarget } from "../../src/graph/types.ts";
 
 export type { Library, ProjectSummary, WorkflowSummary } from "../../src/graph/library.ts";
 
@@ -83,7 +85,7 @@ export function saveWorkflow(definition: WorkflowDefinition): Promise<WorkflowDe
 
 // --- Run requests (records only; nothing runs) ----------------------------------
 
-export type RunsListing = { runs: RunView[]; conductor: "none"; requestTtlMs: number; serverNow: number };
+export type RunsListing = { runs: RunView[]; conductor: "none" | "connected"; targets: DeliveryTarget[]; requestTtlMs: number; serverNow: number };
 
 export function fetchRuns(workflowId: string): Promise<RunsListing> {
   return request("GET", `/api/workflows/${encodeURIComponent(workflowId)}/runs`);
@@ -96,6 +98,37 @@ export function requestRun(workflowId: string, expectedRevision: number): Promis
 
 export function cancelRun(workflowId: string, runId: string): Promise<RunView> {
   return request("POST", `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/cancel`);
+}
+
+export function fetchRun(workflowId: string, runId: string): Promise<RunDetail> {
+  return request("GET", `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}`);
+}
+
+/** Record a human decision on an Approval card. Agents cannot write these. */
+export function approveRun(workflowId: string, runId: string, cardId: string, decision: "approved" | "rejected"): Promise<RunApproval> {
+  return request("POST", `/api/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/approvals`, { cardId, decision });
+}
+
+// --- Connecting a Hermes (pairing + delivery targets) --------------------------
+
+export type ConnectionView = { connected: boolean; createdAt: number | null; targets: DeliveryTarget[] };
+
+/** Begin pairing: returns a one-time code to type on the Hermes machine. */
+export function startPairing(): Promise<{ code: string; expiresAt: number }> {
+  return request("POST", "/api/connect");
+}
+
+export function fetchConnection(): Promise<ConnectionView> {
+  return request("GET", "/api/connection");
+}
+
+export async function disconnect(): Promise<void> {
+  const response = await fetch("/api/connection", { method: "DELETE" });
+  if (!response.ok) throw new ApiError(response.status, "http_error", `Disconnect failed with status ${response.status}.`);
+}
+
+export function fetchDeliveryTargets(): Promise<DeliveryTarget[]> {
+  return request<{ targets: DeliveryTarget[] }>("GET", "/api/delivery-targets").then((payload) => payload.targets);
 }
 
 // --- Hermes job evidence (read-only) -------------------------------------------

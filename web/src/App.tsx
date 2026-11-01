@@ -33,6 +33,7 @@ import { CARD_KINDS, EDGE_LABEL, makeId, newCard } from "./cards.ts";
 import { BriefPanel } from "./BriefPanel.tsx";
 import { HarnessPanel } from "./HarnessPanel.tsx";
 import { RunPanel } from "./RunPanel.tsx";
+import { ConnectPanel } from "./ConnectPanel.tsx";
 import { CardDetails, EdgeDetails } from "./DetailsPanel.tsx";
 
 type Meta = Omit<WorkflowDefinition, "nodes" | "edges">;
@@ -165,6 +166,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const [briefOpen, setBriefOpen] = useState(true);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
   const flow = useReactFlow();
 
   // Saves read the newest canvas through this ref, not a stale closure.
@@ -607,6 +609,14 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         >
           What would run
         </button>
+        <button
+          type="button"
+          className="brief-toggle"
+          aria-expanded={connectOpen}
+          onClick={() => setConnectOpen((open) => !open)}
+        >
+          Connect Hermes
+        </button>
         <div className="add-group" role="group" aria-label="Add a card">
           <span className="add-group__label">Add</span>
           {CARD_KINDS.map(({ kind, label, hint }) => (
@@ -628,6 +638,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
           onClose={() => setRunOpen(false)}
         />
       )}
+      {connectOpen && <ConnectPanel onClose={() => setConnectOpen(false)} />}
 
       {save.kind === "conflict" && (
         <div className="banner banner--warn" role="alert">

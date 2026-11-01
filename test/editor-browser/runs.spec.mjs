@@ -77,12 +77,12 @@ test("run checks guide a fix, a request is recorded for the saved revision, and 
   expect(before.nodes.find((node) => node.id === "gather").inferred).toBe(false);
 
   await panel.getByRole("button", { name: "Request run" }).click();
-  const table = panel.getByRole("table", { name: "Run requests" });
-  await expect(table.getByText("Requested, waiting for a conductor")).toBeVisible();
+  const runs = panel.getByRole("list", { name: "Runs" });
+  await expect(runs.getByText("Requested, waiting for a conductor")).toBeVisible();
   await expect(panel.getByRole("button", { name: "Request run" })).toBeDisabled();
 
   const listing = await (await request.get(`/api/workflows/${doc.id}/runs`)).json();
-  expect(listing.conductor).toBe("none");
+  // conductor connection is a global, set by other specs in the shared service; not asserted here.
   expect(listing.runs).toHaveLength(1);
   expect(listing.runs[0].status).toBe("requested");
   expect(listing.runs[0].revision).toBe(before.revision);
@@ -91,11 +91,11 @@ test("run checks guide a fix, a request is recorded for the saved revision, and 
   expect((await (await request.get(`/api/workflows/${doc.id}`)).json()).revision).toBe(before.revision);
   await page.screenshot({ path: "test-results/runs-shots/runs-requested.png" });
 
-  await table.getByRole("button", { name: "Cancel" }).click();
-  await expect(table.getByText("Cancelled")).toBeVisible();
+  await runs.getByRole("button", { name: "Cancel" }).click();
+  await expect(runs.getByText("Cancelled")).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "What would run" }).click();
-  await expect(page.getByRole("table", { name: "Run requests" }).getByText("Cancelled")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Runs" }).getByText("Cancelled")).toBeVisible();
   const after = await (await request.get(`/api/workflows/${doc.id}/runs`)).json();
   expect(after.runs.map((run) => run.status)).toEqual(["cancelled"]);
 });
