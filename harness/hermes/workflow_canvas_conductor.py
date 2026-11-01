@@ -27,11 +27,16 @@ directory. It never imports Hermes; it shells out to the `hermes` CLI.
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -68,9 +73,28 @@ def load_config(path: str) -> dict:
     cfg.setdefault("hermes_bin", "hermes")
     cfg.setdefault("delivery_dir", os.path.join(os.path.dirname(path), "deliveries"))
     # Real messaging targets, keyed by the opaque id Canvas knows. Never leaves here.
-    cfg.setdefault("targets", {})
+    cfg.setdefault("targets", {})  # opaque id -> real messaging target (local only, never sent to Canvas)
     cfg["canvas_url"] = cfg["canvas_url"].rstrip("/")
+    cfg["_path"] = path
+    if not cfg.get("secret"):
+        # A local secret so idempotency keys and target ids are unguessable.
+        cfg["secret"] = secrets.token_hex(32)
+        save_config(cfg)
     return cfg
+
+
+def save_config(cfg: dict) -> None:
+    path = cfg.get("_path")
+    if not path:
+        return
+    out = {k: v for k, v in cfg.items() if k != "_path"}
+    write_private(path, json.dumps(out, indent=2))
+
+
+def target_id(cfg: dict, real_target: str) -> str:
+    """An opaque, stable id for a real target. The real target never leaves here."""
+    digest = hmac.new(cfg["secret"].encode(), real_target.encode(), hashlib.sha256).hexdigest()
+    return "t:" + digest[:16]
 
 
 # --- ledger (the conductor's own memory) -------------------------------------
@@ -86,18 +110,32 @@ def load_ledger(cfg: dict) -> dict:
 
 def save_ledger(cfg: dict, ledger: dict) -> None:
     path = cfg["ledger_path"]
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as handle:
-        json.dump(ledger, handle)
-    os.replace(tmp, path)
+    fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        os.write(fd, json.dumps(ledger).encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    dfd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
 
 
 # --- Canvas HTTP (conductor token) -------------------------------------------
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # noqa: D401 - never follow a redirect with the token
+        raise ConductorError("Canvas attempted a redirect; refusing to resend the token.")
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def canvas(cfg: dict, method: str, path: str, body: dict | None = None) -> dict:
@@ -108,7 +146,7 @@ def canvas(cfg: dict, method: str, path: str, body: dict | None = None) -> dict:
     if data is not None:
         req.add_header("content-type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _OPENER.open(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8")
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as err:
@@ -158,52 +196,128 @@ def refresh_targets(cfg: dict) -> None:
         label = item.get("label") if isinstance(item, dict) else None
         if not isinstance(target, str) or target == "":
             continue
-        opaque = "t:" + target  # a stable opaque id; the real target never leaves here
-        reported.append({"id": opaque, "label": label or target, "kind": "messaging"})
-        real_map[opaque] = target
+        opaque = target_id(cfg, target)
+        real_map[opaque] = target  # local only, never sent to Canvas
+        # The real target must never be the visible label either.
+        shown = label if isinstance(label, str) and label and label != target else safe_label(target)
+        reported.append({"id": opaque, "label": shown, "kind": "messaging"})
     cfg["targets"] = real_map
+    save_config(cfg)
     try:
         canvas(cfg, "PUT", "/api/conductor/targets", {"targets": reported})
     except ConductorError:
         pass
 
 
+def safe_label(target: str) -> str:
+    """A human label that reveals the platform but not the chat/channel id."""
+    platform = target.split(":", 1)[0] or "message"
+    tag = hashlib.sha256(target.encode()).hexdigest()[:4]
+    return f"{platform} · {tag}"
+
+
 # --- one pass ----------------------------------------------------------------
 
 
+TICK_DEADLINE_S = 110  # finish well inside cron's 3-minute kill
+
+
 def tick(cfg: dict) -> dict:
+    # One tick at a time: a lock stops two overlapping ticks double-sending.
+    lock_path = cfg["ledger_path"] + ".lock"
+    os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock_fd)
+        return {"skipped": "another tick holds the lock"}
+    try:
+        return _tick_locked(cfg)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _tick_locked(cfg: dict) -> dict:
     ledger = load_ledger(cfg)
     refresh_targets(cfg)
+    deadline = time.monotonic() + TICK_DEADLINE_S
 
     # Claim anything pending. A claimed run leaves the pending list; we keep its
-    # bundle in the ledger and work it across ticks.
+    # bundle in the ledger and work it across ticks. Save right after each claim
+    # so a crash mid-tick never loses a claimed run (it can't be re-claimed).
     pending = canvas(cfg, "GET", "/api/conductor/pending").get("runs", [])
+    summary = {"claimed": 0, "created": 0, "delivered": 0, "runs": {}}
     for item in pending:
-        run_id = item["runId"]
-        if run_id in ledger["runs"]:
+        if time.monotonic() > deadline:
+            break
+        run_id = item.get("runId")
+        if not isinstance(run_id, str) or run_id in ledger["runs"]:
+            continue
+        ok, why = validate_bundle(item.get("bundle"), run_id)
+        if not ok:
+            # Refuse the bundle; do not claim. Report nothing (not ours yet).
+            summary["runs"][run_id] = f"refused_bundle:{why}"
             continue
         if canvas(cfg, "POST", f"/api/conductor/claim/{run_id}").get("claimed"):
-            ledger["runs"][run_id] = {
-                "bundle": item["bundle"],
-                "tasks": {},        # step key -> created task id
-                "deliveries": {},   # artifact card id -> "attempting" | "sent" | "failed"
-                "done": False,
-            }
+            ledger["runs"][run_id] = {"bundle": item["bundle"], "tasks": {}, "deliveries": {}, "done": False}
+            summary["claimed"] += 1
+            save_ledger(cfg, ledger)
 
-    summary = {"claimed": 0, "created": 0, "delivered": 0, "runs": {}}
-    for run_id, state in ledger["runs"].items():
-        if state["done"]:
+    for run_id, state in list(ledger["runs"].items()):
+        if state["done"] or time.monotonic() > deadline:
             continue
-        summary["runs"][run_id] = advance_run(cfg, ledger, run_id, state, summary)
+        try:
+            summary["runs"][run_id] = advance_run(cfg, ledger, run_id, state, summary)
+        except ConductorError as err:
+            # One bad run must not stop the others. Leave it for the next tick.
+            summary["runs"][run_id] = f"error:{err}"
+        except (KeyError, TypeError, ValueError) as err:
+            summary["runs"][run_id] = f"bad_state:{err}"
+        save_ledger(cfg, ledger)
 
     save_ledger(cfg, ledger)
     return summary
+
+
+def validate_bundle(bundle, run_id: str) -> tuple:
+    """Refuse anything that is not a well-formed run bundle for this run."""
+    if not isinstance(bundle, dict):
+        return False, "not an object"
+    if bundle.get("kind") != "workflow-canvas.run-bundle" or bundle.get("version") != 1:
+        return False, "wrong kind/version"
+    if bundle.get("runId") != run_id or bundle.get("keyPrefix") != f"wc:{run_id}:":
+        return False, "run id mismatch"
+    steps = bundle.get("steps")
+    if not isinstance(steps, list):
+        return False, "steps not a list"
+    keys = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            return False, "step not an object"
+        key = step.get("key")
+        if not isinstance(key, str) or not key.startswith(bundle["keyPrefix"]) or key in keys:
+            return False, "bad or duplicate step key"
+        keys.add(key)
+        if step.get("role") not in ("run", "approval"):
+            return False, "bad role"
+        if not isinstance(step.get("title"), str) or not isinstance(step.get("body"), str):
+            return False, "bad title/body"
+        mins = step.get("maxRuntimeMinutes")
+        if not isinstance(mins, int) or not (1 <= mins <= 1440):
+            return False, "bad runtime"
+        for pk in step.get("waitsForKeys", []):
+            if pk not in keys and pk not in {s.get("key") for s in steps}:
+                return False, "waitsFor unknown key"
+    return True, ""
 
 
 def advance_run(cfg: dict, ledger: dict, run_id: str, state: dict, summary: dict) -> str:
     bundle = state["bundle"]
     steps = bundle["steps"]
     by_key = {step["key"]: step for step in steps}
+    decides_of = {s["cardId"]: s.get("decides", []) for s in steps if s.get("decides")}
 
     run = canvas(cfg, "GET", f"/api/conductor/run/{run_id}")
     approvals = {entry["cardId"]: entry["decision"] for entry in run.get("approvals", [])}
@@ -230,103 +344,156 @@ def advance_run(cfg: dict, ledger: dict, run_id: str, state: dict, summary: dict
                 state["done"] = True
                 return "refused_skill"
 
-    # Read the outcome of every task we created. We look up only our own ids;
-    # a task we did not create can never satisfy a gate here.
-    outcomes: dict[str, str] = {}   # card id -> outcome
-    branch_of: dict[str, str] = {}  # decision card id -> reported branch
+    # Read the outcome of every task WE created. Only our own ids; a task we did
+    # not create can never satisfy a gate here.
+    outcomes: dict = {}   # card id -> outcome
+    branch_of: dict = {}  # decision card id -> reported branch (only when the task is done)
     for key, task_id in state["tasks"].items():
         card_id = by_key[key]["cardId"]
         task = hermes_json(cfg, kanban(cfg, "show", task_id, "--json"))
         task = task.get("task", task)
-        outcomes[card_id] = KANBAN_TO_OUTCOME.get(task.get("status", ""), "running")
-        meta = task.get("metadata") or {}
-        if isinstance(meta, dict) and isinstance(meta.get("branch"), str):
-            branch_of[card_id] = meta["branch"]
+        status = KANBAN_TO_OUTCOME.get(task.get("status", ""), "running")
+        outcomes[card_id] = status
+        if status == "completed":
+            meta = task.get("metadata") or {}
+            if isinstance(meta, dict) and isinstance(meta.get("branch"), str):
+                branch_of[card_id] = meta["branch"]
 
-    # Decide which not-yet-created steps are due, and create them.
+    # A decision step that finished must report exactly one of its listed branch
+    # values. Anything else stops the run (RUN-PLAN 12.1: "branch not reported").
+    for card_id, allowed in decides_of.items():
+        if outcomes.get(card_id) == "completed":
+            chosen = branch_of.get(card_id)
+            if chosen is None or chosen not in allowed:
+                report(cfg, run_id, steps, outcomes, state["deliveries"], "blocked")
+                state["done"] = True
+                return "blocked:branch-not-reported"
+
+    dead = compute_dead(steps, by_key, outcomes, branch_of, approvals, decides_of)
+
+    # A failed or blocked step stops the run: create nothing more.
+    if any(outcomes.get(by_key[k]["cardId"]) in ("failed", "blocked") for k in state["tasks"]):
+        deliver(cfg, run_id, bundle, state, outcomes, dead, ledger, summary)
+        report(cfg, run_id, steps, outcomes, state["deliveries"], "failed")
+        state["done"] = True
+        return "failed"
+
+    # Create due steps.
     for step in steps:
         key = step["key"]
-        if key in state["tasks"]:
+        if key in state["tasks"] or step["role"] == "approval" or step["cardId"] in dead:
             continue
-        if step["role"] == "approval":
-            continue  # approval steps are never Kanban tasks; they gate via Canvas
-        decision = step_readiness(step, by_key, outcomes, branch_of, approvals)
-        if decision == "skip":
-            continue  # untaken branch or rejected approval: never created
-        if decision != "due":
-            continue  # waiting on a parent, a branch, or an approval
-        task_id = create_step(cfg, run_id, step, state)
+        if step_readiness(step, by_key, outcomes, branch_of, approvals, dead, decides_of) != "due":
+            continue
+        task_id = create_step(cfg, run_id, step, state, ledger)
         state["tasks"][key] = task_id
         outcomes[step["cardId"]] = "created"
         summary["created"] += 1
 
-    # Deliveries: send each at most once, after its producers complete.
-    deliver(cfg, run_id, bundle, state, outcomes, summary)
+    deliver(cfg, run_id, bundle, state, outcomes, dead, ledger, summary)
 
-    # Report outcome only.
-    run_status = roll_up(steps, state, outcomes)
+    run_status = roll_up(bundle, state, outcomes, dead, approvals)
     report(cfg, run_id, steps, outcomes, state["deliveries"], run_status)
+    if run_status in ("completed", "stopped"):
+        state["done"] = True
     return run_status
 
 
-def step_readiness(step, by_key, outcomes, branch_of, approvals) -> str:
-    """'due', 'wait', or 'skip' for a step not yet created."""
+def compute_dead(steps, by_key, outcomes, branch_of, approvals, decides_of) -> set:
+    """Cards that will never be created: an untaken branch, or every parent dead."""
+    dead: set = set()
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            cid = step["cardId"]
+            if cid in dead:
+                continue
+            d = False
+            for req in step.get("branches", []):
+                dcard = req["decisionCardId"]
+                if outcomes.get(dcard) == "completed":
+                    chosen = branch_of.get(dcard)
+                    if chosen in (decides_of.get(dcard) or []) and chosen not in req["branches"]:
+                        d = True
+            parents = step.get("waitsForKeys", [])
+            if parents:
+                all_dead = True
+                for pk in parents:
+                    parent = by_key.get(pk)
+                    if parent is None:
+                        all_dead = False
+                        continue
+                    pcid = parent["cardId"]
+                    pdead = pcid in dead or (parent["role"] == "approval" and approvals.get(pcid) == "rejected")
+                    if not pdead:
+                        all_dead = False
+                if all_dead:
+                    d = True
+            if d:
+                dead.add(cid)
+                changed = True
+    return dead
+
+
+def step_readiness(step, by_key, outcomes, branch_of, approvals, dead, decides_of) -> str:
+    """'due' or 'wait' for a not-created, not-dead run step. A dead parent is ignored (join)."""
     for parent_key in step.get("waitsForKeys", []):
         parent = by_key.get(parent_key)
         if parent is None:
             return "wait"
         card_id = parent["cardId"]
+        if card_id in dead or (parent["role"] == "approval" and approvals.get(card_id) == "rejected"):
+            continue  # a dead/rejected parent is not waited on; a live path carries this join
         if parent["role"] == "approval":
-            decision = approvals.get(card_id)
-            if decision == "rejected":
-                return "skip"
-            if decision != "approved":
+            if approvals.get(card_id) != "approved":
                 return "wait"
-        else:
-            if outcomes.get(card_id) != "completed":
-                return "wait"
+        elif outcomes.get(card_id) != "completed":
+            return "wait"
     for requirement in step.get("branches", []):
         decision_card = requirement["decisionCardId"]
+        if outcomes.get(decision_card) != "completed":
+            return "wait"
         chosen = branch_of.get(decision_card)
-        if chosen is None:
-            return "wait"            # the decision has not reported yet
         if chosen not in requirement["branches"]:
-            return "skip"            # a different branch was taken
+            return "wait"
     return "due"
 
 
-def create_step(cfg: dict, run_id: str, step: dict, state: dict) -> str:
+def safe_title(title: str) -> str:
+    """A Kanban title that can never be read as a CLI option or carry control chars."""
+    cleaned = "".join(ch for ch in title if ch >= " " and ch != "\x7f").strip()
+    return cleaned or "Workflow Canvas step"
+
+
+def create_step(cfg: dict, run_id: str, step: dict, state: dict, ledger: dict) -> str:
     parents = [
         state["tasks"][parent_key]
         for parent_key in step.get("waitsForKeys", [])
         if parent_key in state["tasks"]
     ]
+    # The idempotency key is unguessable, so no one can pre-create a task under a
+    # later step's key and have the conductor adopt it (Rule 3).
+    idem = "wck:" + hmac.new(cfg["secret"].encode(), step["key"].encode(), hashlib.sha256).hexdigest()[:24]
     args = kanban(
-        cfg,
-        "create",
-        step["title"],
-        "--assignee",
-        step["assignee"],
-        "--idempotency-key",
-        step["key"],
-        "--max-retries",
-        "1",
-        "--max-runtime",
-        f"{int(step['maxRuntimeMinutes'])}m",
-        "--workspace",
-        "scratch",
+        cfg, "create",
+        "--assignee", step["assignee"],
+        "--idempotency-key", idem,
+        "--max-retries", "1",
+        "--max-runtime", f"{int(step['maxRuntimeMinutes'])}m",
+        "--workspace", "scratch",
         "--json",
     )
     for skill in step.get("skills", []):
         args += ["--skill", skill]
     for parent in parents:
         args += ["--parent", parent]
-    # The card's text goes in a body file, never on the command line.
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
         handle.write(step["body"])
         body_path = handle.name
     try:
-        args += ["--body-file", body_path]
+        # `--` ends options so a title starting with '-' can never be read as a flag.
+        args += ["--body-file", body_path, "--", safe_title(step["title"])]
         created = hermes_json(cfg, args)
     finally:
         try:
@@ -337,27 +504,37 @@ def create_step(cfg: dict, run_id: str, step: dict, state: dict) -> str:
     task_id = created.get("id")
     if not isinstance(task_id, str):
         raise ConductorError(f"hermes kanban create returned no id for {step['key']}")
+    # Adopt a task only if it is not already one of ours. A replayed id we already
+    # hold would mean tampering; stop rather than trust it.
+    for other_id, other in ledger["runs"].items():
+        for existing_key, existing_id in other["tasks"].items():
+            if existing_id == task_id and not (other_id == run_id and existing_key == step["key"]):
+                raise ConductorError(f"create returned an id already in the ledger ({task_id}); refusing (possible tampering)")
     return task_id
 
 
-def deliver(cfg: dict, run_id: str, bundle: dict, state: dict, outcomes: dict, summary: dict) -> None:
+def deliver(cfg: dict, run_id: str, bundle: dict, state: dict, outcomes: dict, dead: set, ledger: dict, summary: dict) -> None:
     by_key = {step["key"]: step for step in bundle["steps"]}
     for delivery in bundle.get("deliveries", []):
         card_id = delivery["cardId"]
         if state["deliveries"].get(card_id):
-            continue  # already attempted; at most once
-        producers_done = all(
-            outcomes.get(by_key[key]["cardId"]) == "completed"
-            for key in delivery.get("afterKeys", [])
-            if key in by_key
-        )
-        if not delivery.get("afterKeys") or not producers_done:
+            continue  # already attempted, sent, failed or skipped: at most once
+        after = [by_key[key] for key in delivery.get("afterKeys", []) if key in by_key]
+        if not after:
             continue
+        # If any producing step is on a dead path, the output is never made.
+        if any(step["cardId"] in dead for step in after):
+            state["deliveries"][card_id] = "skipped"
+            continue
+        run_producers = [step for step in after if step["role"] == "run"]
+        if not run_producers or not all(outcomes.get(step["cardId"]) == "completed" for step in run_producers):
+            continue  # still waiting on a producer
         # Mark the attempt before acting, so a crash never causes a second send.
         state["deliveries"][card_id] = "attempting"
-        save_ledger(cfg, {"runs": {**load_ledger(cfg)["runs"], run_id: state}})
+        save_ledger(cfg, ledger)
         ok = perform_delivery(cfg, run_id, delivery)
         state["deliveries"][card_id] = "sent" if ok else "failed"
+        save_ledger(cfg, ledger)
         if ok:
             summary["delivered"] += 1
 
@@ -385,23 +562,37 @@ def perform_delivery(cfg: dict, run_id: str, delivery: dict) -> bool:
     return "error" not in body
 
 
-def roll_up(steps: list, state: dict, outcomes: dict) -> str:
-    run_cards = [step["cardId"] for step in steps if step["role"] == "run"]
-    if any(state["deliveries"].get(k) == "failed" for k in state["deliveries"]):
-        return "failed"
-    if any(outcomes.get(card) in ("failed", "blocked") for card in run_cards):
-        return "failed"
-    created_cards = {step["cardId"] for step in steps if step["key"] in state["tasks"]}
-    if created_cards and all(outcomes.get(card) == "completed" for card in created_cards):
-        # Completed only when every step that will ever be created has been created
-        # and finished. A step still gated is not yet created, so keep running.
-        pending_steps = [
-            step for step in steps
-            if step["role"] == "run" and step["key"] not in state["tasks"]
-        ]
-        if not pending_steps:
-            return "completed"
-    return "running"
+def roll_up(bundle: dict, state: dict, outcomes: dict, dead: set, approvals: dict) -> str:
+    steps = bundle["steps"]
+    # A run step is still pending if it's alive but not yet created-and-completed.
+    pending_run = any(
+        step["role"] == "run"
+        and step["cardId"] not in dead
+        and (step["key"] not in state["tasks"] or outcomes.get(step["cardId"]) != "completed")
+        for step in steps
+    )
+    # An approval is pending if it's alive and not yet decided.
+    pending_approval = any(
+        step["role"] == "approval"
+        and step["cardId"] not in dead
+        and step["cardId"] not in approvals
+        for step in steps
+    )
+    # A delivery is pending if its producers are alive and it has not settled.
+    by_key = {step["key"]: step for step in steps}
+    def settled(card_id: str) -> bool:
+        return state["deliveries"].get(card_id) in ("sent", "failed", "skipped")
+    pending_delivery = any(
+        not settled(d["cardId"])
+        and not any(by_key[k]["cardId"] in dead for k in d.get("afterKeys", []) if k in by_key)
+        for d in bundle.get("deliveries", [])
+    )
+    if pending_run or pending_approval or pending_delivery:
+        return "waiting-approval" if (pending_approval and not pending_run) else "running"
+    # Nothing left to do. A rejected approval means the run was stopped on purpose.
+    if any(decision == "rejected" for decision in approvals.values()):
+        return "stopped"
+    return "completed"
 
 
 def report(cfg: dict, run_id: str, steps: list, outcomes: dict, deliveries: dict, run_status: str) -> None:
@@ -455,10 +646,24 @@ def pair_with_canvas(canvas_url: str, code: str) -> str | None:
 
 def _write(path: str, text: str, mode: int | None = None) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(text)
-    if mode is not None:
-        os.chmod(path, mode)
+    flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
+    fd = os.open(path, flags, mode if mode is not None else 0o644)
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def write_private(path: str, text: str) -> None:
+    """Write a secret-bearing file created 0600 from the start (no readable window)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def do_install(args) -> int:

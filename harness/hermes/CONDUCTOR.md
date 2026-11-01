@@ -29,6 +29,21 @@ trade or move money.
 - Each delivery is sent at most once. A local-file delivery writes a file; a
   messaging delivery resolves the opaque target id to the real target the
   conductor holds privately. Result text never passes back through Canvas.
+- Canvas only ever sees an opaque `HMAC(local secret, target)` id and a
+  platform-only label; the real chat/channel id stays in the 0600 config.
+- A joined step runs once any live branch reaches it; dead branches are ignored.
+  A decision that finishes without reporting one of its listed branches stops the
+  run rather than guessing.
+- Idempotency keys are unguessable (`HMAC(secret, step key)`) and a returned id
+  already in the ledger is refused as possible tampering.
+- One tick runs at a time (an exclusive lock) and the ledger is saved around every
+  claim, create and send, so a crash or overlap cannot double-send or lose a run.
+
+Safety still deferred to later rounds (see `docs/R2-PLAN.md` §7b): approve,
+connect and pair need no human credential yet — that is **R3**, a hard
+prerequisite for any real run (**R4**), where the runner also gets a strict tool
+allowlist verified against `~/.hermes/.env`. Until then this is a trusted-network
+pilot behind a tunnel that exposes only `/api/conductor/*`.
 
 ## Commands
 

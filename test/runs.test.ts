@@ -177,7 +177,7 @@ test("bad bodies and unknown ids are refused; there is still no run or execute r
   });
 });
 
-test("requests survive a restart, and deleting the workflow deletes them; duplicates start with none", async () => {
+test("requests survive a restart; an open run blocks delete until stopped; duplicates start with none", async () => {
   await withServer(async ({ base, path }) => {
     const doc = await seeded(base, [ready("a")]);
     const id = doc.id as string;
@@ -193,6 +193,9 @@ test("requests survive a restart, and deleting the workflow deletes them; duplic
     const copy = await json(await post(`${base}/api/workflows/${id}/duplicate`));
     assert.deepEqual((await json(await fetch(`${base}/api/workflows/${copy.id as string}/runs`))).runs, []);
 
+    // A workflow with an open (unfinished) run cannot be deleted until it is stopped.
+    assert.equal((await fetch(`${base}/api/workflows/${id}`, { method: "DELETE" })).status, 409);
+    await post(`${base}/api/workflows/${id}/runs/${run.id as string}/cancel`);
     assert.equal((await fetch(`${base}/api/workflows/${id}`, { method: "DELETE" })).status, 204);
     const db = new DatabaseSync(path);
     try {

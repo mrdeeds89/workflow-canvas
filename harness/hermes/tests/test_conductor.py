@@ -132,7 +132,8 @@ class ConductorTest(unittest.TestCase):
             "token": TOKEN, "board": "test-board", "ledger_path": self.ledger,
             "allowed_profiles": ["runner"], "allowed_skills": ["daily-digest"],
             "hermes_bin": FAKE_HERMES, "delivery_dir": os.path.join(self.dir, "deliveries"),
-            "targets": {"t:telegram": "telegram"},
+            "secret": "testsecret0000000000000000000000",
+            "targets": {},
         }
         self.cfg_path = os.path.join(self.dir, "cfg.json")
         with open(self.cfg_path, "w") as h:
@@ -254,10 +255,12 @@ class ConductorTest(unittest.TestCase):
         self.assertEqual(self.state.reports["r7"]["deliveries"], [{"cardId": "out", "status": "sent"}])
 
     def test_messaging_delivery_sends_once(self):
+        import hashlib, hmac
+        tid = "t:" + hmac.new(b"testsecret0000000000000000000000", b"telegram", hashlib.sha256).hexdigest()[:16]
         self.state.add_run("r8", bundle(
             "r8",
             [step("wc:r8:make", "make")],
-            deliveries=[{"cardId": "out", "targetId": "t:telegram", "afterKeys": ["wc:r8:make"], "localFile": False}],
+            deliveries=[{"cardId": "out", "targetId": tid, "afterKeys": ["wc:r8:make"], "localFile": False}],
         ))
         self.tick()
         self.set_task("make", status="done")
@@ -280,6 +283,43 @@ class ConductorTest(unittest.TestCase):
         statuses = [t["status"] for t in self.tasks()]
         self.assertEqual(statuses, ["archived"])
         self.assertEqual(len(self.tasks()), 1, "b was never created after cancel")
+
+
+    def test_join_fires_after_a_branch_with_a_dead_parent(self):
+        # d decides; left on branch "a", right on branch "b"; join waits for both.
+        self.state.add_run("rj", bundle("rj", [
+            step("wc:rj:d", "d", decides=["a", "b"]),
+            step("wc:rj:left", "left", waits=["wc:rj:d"], branches=[{"decisionCardId": "d", "branches": ["a"]}]),
+            step("wc:rj:right", "right", waits=["wc:rj:d"], branches=[{"decisionCardId": "d", "branches": ["b"]}]),
+            step("wc:rj:join", "join", waits=["wc:rj:left", "wc:rj:right"]),
+        ]))
+        self.tick()
+        self.set_task("d", status="done", metadata={"branch": "a"})
+        self.tick()  # left created, right is dead
+        self.assertEqual(sorted(t["title"] for t in self.tasks()), ["d", "left"])
+        self.set_task("left", status="done")
+        self.tick()  # join fires on the live parent, ignoring the dead right branch
+        self.assertIn("join", [t["title"] for t in self.tasks()])
+        self.assertNotIn("right", [t["title"] for t in self.tasks()])
+
+    def test_a_decision_with_no_valid_branch_stops_the_run(self):
+        self.state.add_run("rb", bundle("rb", [
+            step("wc:rb:d", "d", decides=["pass", "fail"]),
+            step("wc:rb:c", "c", waits=["wc:rb:d"], branches=[{"decisionCardId": "d", "branches": ["pass"]}]),
+        ]))
+        self.tick()
+        self.set_task("d", status="done")  # completed but reported no branch
+        self.tick()
+        self.assertEqual(self.state.reports["rb"]["runStatus"], "blocked")
+        self.assertNotIn("c", [t["title"] for t in self.tasks()])
+
+    def test_a_malformed_bundle_is_refused_and_never_claimed(self):
+        bad = bundle("rx", [step("wc:rx:a", "a")])
+        bad["kind"] = "not-a-bundle"
+        self.state.add_run("rx", bad)
+        self.tick()
+        self.assertEqual(self.tasks(), [], "nothing created from a malformed bundle")
+        self.assertNotIn("rx", self.state.claimed, "a malformed bundle is not claimed")
 
 
 if __name__ == "__main__":

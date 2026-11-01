@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { LOCAL_FILE_TARGET, type DeliveryTarget } from "./types.ts";
 
 /**
@@ -88,6 +88,7 @@ export function createConductorStore(db: DatabaseSync): ConductorStore {
   const insertCode = db.prepare("INSERT INTO pairing_codes (code_hash, created_at, expires_at, redeemed_at) VALUES (?, ?, ?, NULL)");
   const findCode = db.prepare("SELECT code_hash, expires_at, redeemed_at FROM pairing_codes WHERE code_hash = ?");
   const redeemCode = db.prepare("UPDATE pairing_codes SET redeemed_at = ? WHERE code_hash = ? AND redeemed_at IS NULL AND expires_at > ?");
+  const invalidateOtherCodes = db.prepare("UPDATE pairing_codes SET redeemed_at = ? WHERE code_hash != ? AND redeemed_at IS NULL");
   const revokeAll = db.prepare("UPDATE conductor_connections SET revoked_at = ? WHERE revoked_at IS NULL");
   const insertConn = db.prepare("INSERT INTO conductor_connections (id, token_hash, created_at, targets) VALUES (?, ?, ?, '[]')");
   const activeConn = db.prepare("SELECT id, created_at, targets FROM conductor_connections WHERE revoked_at IS NULL ORDER BY created_at DESC, rowid DESC LIMIT 1");
@@ -111,6 +112,8 @@ export function createConductorStore(db: DatabaseSync): ConductorStore {
       if (!row) return null;
       const result = redeemCode.run(now, hash, now);
       if (Number(result.changes) === 0) return null; // already used or expired
+      // A successful pairing voids every other outstanding code.
+      invalidateOtherCodes.run(now, hash);
       // One Hermes at a time: redeeming a code revokes any prior connection.
       revokeAll.run(now);
       const token = randomBytes(32).toString("hex");
@@ -121,10 +124,7 @@ export function createConductorStore(db: DatabaseSync): ConductorStore {
     verifyToken(token) {
       if (typeof token !== "string" || token.length < 32 || token.length > 128) return null;
       const row = connByHash.get(sha256(token)) as { id: string } | undefined;
-      if (!row) return null;
-      // Constant-time confirm that the stored id maps back (defensive; hash lookup already matched).
-      const a = Buffer.from(row.id);
-      return timingSafeEqual(a, a) ? row.id : null;
+      return row ? row.id : null;
     },
     connection() {
       const row = activeConnection();

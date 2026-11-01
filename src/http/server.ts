@@ -220,6 +220,14 @@ async function handle(
     return;
   }
 
+  // The conductor token is accepted on /api/conductor/* only. A bearer token
+  // presented to any other API route is refused, so it can never unlock the
+  // editor or approval routes.
+  if (req.headers.authorization && !(path === "/api/conductor" || path.startsWith("/api/conductor/"))) {
+    sendError(res, 403, "forbidden", "This credential is not valid for this route.");
+    return;
+  }
+
   if (path === "/api/health") {
     if (method !== "GET") return methodNotAllowed(res, ["GET"]);
     sendJson(res, 200, { status: "ok", execution: "disabled" });
@@ -412,6 +420,9 @@ async function handle(
       return;
     }
     if (method === "DELETE") {
+      if (store.runs.hasActiveRun(id, harness.now())) {
+        return sendError(res, 409, "run_in_progress", "This workflow has a run that is not finished. Stop or cancel it first.");
+      }
       if (!store.deleteWorkflow(id)) return sendError(res, 404, "not_found", "No such workflow.");
       res.writeHead(204, { "cache-control": "no-store" });
       res.end();

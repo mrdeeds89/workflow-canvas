@@ -64,7 +64,10 @@ test("the conductor routes need the token, and the token reaches nothing else", 
     assert.equal((await fetch(`${base}/api/conductor/pending`, { headers: { authorization: `Bearer ${token}` } })).status, 200);
     // A bad token is refused.
     assert.equal((await fetch(`${base}/api/conductor/pending`, { headers: { authorization: "Bearer wrong" } })).status, 401);
-    // The token is consulted on no other route: a workflow route neither needs nor is unlocked by it.
+    // The token reaches nothing else: presented to any non-conductor route it is refused outright.
+    assert.equal((await fetch(`${base}/api/workflows`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: "{}" })).status, 403);
+    assert.equal((await fetch(`${base}/api/library`, { headers: { authorization: `Bearer ${token}` } })).status, 403);
+    // An unknown conductor subpath with a valid token is simply not found.
     assert.equal((await fetch(`${base}/api/conductor/nonsense`, { headers: { authorization: `Bearer ${token}` } })).status, 404);
   });
 });

@@ -51,6 +51,8 @@ export type RunStore = {
   // --- Human approvals (agents cannot write these) ---
   approve(workflowId: string, runId: string, cardId: string, decision: "approved" | "rejected", now: number): RunApproval | null;
   approvals(runId: string): RunApproval[];
+  /** True if the workflow has a requested/claimed/running/waiting run. */
+  hasActiveRun(workflowId: string, now: number): boolean;
 };
 
 type RunRow = {
@@ -87,21 +89,22 @@ function parseReport(value: unknown): RunReportPayload | null {
     if (typeof value.runStatus !== "string" || !REPORT_RUN_STATES.has(value.runStatus)) return null;
     out.runStatus = value.runStatus as RunReportPayload["runStatus"];
   }
+  const okId = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 128;
   if (value.steps !== undefined) {
-    if (!Array.isArray(value.steps)) return null;
+    if (!Array.isArray(value.steps) || value.steps.length > 500) return null;
     const steps: RunStepOutcome[] = [];
     for (const step of value.steps) {
-      if (!isRecord(step) || typeof step.cardId !== "string" || typeof step.status !== "string" || !STEP_STATES.has(step.status)) return null;
-      if (step.branch !== undefined && typeof step.branch !== "string") return null;
+      if (!isRecord(step) || !okId(step.cardId) || typeof step.status !== "string" || !STEP_STATES.has(step.status)) return null;
+      if (step.branch !== undefined && (typeof step.branch !== "string" || step.branch.length > 100)) return null;
       steps.push({ cardId: step.cardId, status: step.status as RunStepOutcome["status"], ...(step.branch !== undefined ? { branch: step.branch } : {}) });
     }
     out.steps = steps;
   }
   if (value.deliveries !== undefined) {
-    if (!Array.isArray(value.deliveries)) return null;
+    if (!Array.isArray(value.deliveries) || value.deliveries.length > 500) return null;
     const deliveries = [];
     for (const d of value.deliveries) {
-      if (!isRecord(d) || typeof d.cardId !== "string" || typeof d.status !== "string" || !DELIVERY_STATES.has(d.status)) return null;
+      if (!isRecord(d) || !okId(d.cardId) || typeof d.status !== "string" || !DELIVERY_STATES.has(d.status)) return null;
       deliveries.push({ cardId: d.cardId, status: d.status as "sent" | "failed" | "skipped" });
     }
     out.deliveries = deliveries;
@@ -167,9 +170,7 @@ export function createRunStore(db: DatabaseSync): RunStore {
   const prune = db.prepare(
     "DELETE FROM run_requests WHERE workflow_id = ? AND claimed_at IS NULL AND cancelled_at IS NULL AND id NOT IN (SELECT id FROM run_requests WHERE workflow_id = ? ORDER BY requested_at DESC, rowid DESC LIMIT ?)",
   );
-  const removeReqs = db.prepare("DELETE FROM run_requests WHERE workflow_id = ?");
-  const removeApprovals = db.prepare("DELETE FROM run_approvals WHERE workflow_id = ?");
-  const removeReports = db.prepare("DELETE FROM run_reports WHERE workflow_id = ?");
+  const removeUnclaimedReqs = db.prepare("DELETE FROM run_requests WHERE workflow_id = ? AND claimed_at IS NULL");
   const insertApproval = db.prepare(
     "INSERT INTO run_approvals (workflow_id, run_id, card_id, decision, decided_at) VALUES (?, ?, ?, ?, ?)",
   );
@@ -269,9 +270,9 @@ export function createRunStore(db: DatabaseSync): RunStore {
       return row ? view(row, now) : null;
     },
     removeWorkflow(workflowId) {
-      removeApprovals.run(workflowId);
-      removeReports.run(workflowId);
-      removeReqs.run(workflowId);
+      // Keep run evidence durable (approvals, reports, and any claimed run) as a
+      // tombstone; only stale, never-claimed requests are cleared.
+      removeUnclaimedReqs.run(workflowId);
     },
     pending(now) {
       const out: PendingRun[] = [];
@@ -295,6 +296,8 @@ export function createRunStore(db: DatabaseSync): RunStore {
     report(runId, payload, now) {
       const row = byId.get(runId) as RunRow | undefined;
       if (!row) return false;
+      // Only a run the conductor has actually claimed, and not cancelled, may be reported on.
+      if (row.claimed_at === null || row.cancelled_at !== null) return false;
       const parsed = parseReport(payload);
       if (!parsed) return false;
       insertReport.run(row.workflow_id, runId, now, JSON.stringify(parsed));
@@ -304,8 +307,17 @@ export function createRunStore(db: DatabaseSync): RunStore {
     approve(workflowId, runId, cardId, decision, now) {
       const row = one.get(workflowId, runId) as RunRow | undefined;
       if (!row) return null;
+      // A finished run cannot be approved, and only an approval card in this run's plan can be.
+      if (["completed", "failed", "stopped", "cancelled", "expired"].includes(statusOf(row, now))) return null;
+      const plan = parsePlan(row);
+      const isApprovalCard = plan.stages.some((stage) => stage.steps.some((step) => step.cardId === cardId && step.role === "approval"));
+      if (!isApprovalCard) return null;
       insertApproval.run(workflowId, runId, cardId, decision, now);
       return { cardId, decision, decidedAt: now };
+    },
+    hasActiveRun(workflowId, now) {
+      const open = new Set(["requested", "claimed", "running", "waiting-approval"]);
+      return (byWorkflow.all(workflowId) as RunRow[]).some((row) => open.has(statusOf(row, now)));
     },
     approvals(runId) {
       return approvalsOf(runId);

@@ -100,7 +100,7 @@ Per run: progress per stage, per-card badges labelled "reported by Kanban", per-
 | **R2.2** | **Done 2026-11-01.** Conductor `tick` built; 9 hermetic tests (stub Canvas + fake `hermes`) and a gated real-CLI test on a throwaway named board. | §7 checks pass |
 | **R2.3** | **Done 2026-11-01.** `install`/`uninstall`/`allow-profile`/`allow-skill`/`status` built into the conductor; 5 hermetic tests (stub Canvas + fake `hermes`): dry-run makes nothing, full install writes config (600), profile config, wrapper and issues the right hermes commands, bad pairing makes nothing, uninstall removes config+wrapper+cron and keeps the board. Real profile/board/cron creation stays R4. | Install then uninstall leaves only the board; nothing outside the throwaway home changes |
 | **R2.4** | **Done 2026-11-01.** Connect Hermes panel (pairing code + status + targets), Deliver picker on artifact cards (from the connected Hermes's targets), run view (per-card badges, Approve/Reject, Stop/Cancel). New `connect.spec.mjs`; editor-browser audit + restart + theme pass. | Approve opens the next stage; delivery choices come only from reported targets |
-| **R2.5** | Independent review, then docs, including a one-page "connect your Hermes" guide written for non-technical users | Review findings fixed or recorded |
+| **R2.5** | **Done 2026-11-01.** Independent review (§7b), fixes landed with tests, non-technical guide `docs/CONNECT-YOUR-HERMES.md`. | Review findings fixed or recorded as hard R3/R4 gates |
 
 ## 7. Acceptance (R2 scope)
 
@@ -125,6 +125,66 @@ A parallel planning session (`.hermes/plans/2026-10-31_131255-run-tracking-contr
 4. **Run evidence must be durable.** The R1 request table keeps 20 rows per workflow and is deleted with the workflow. Run reports go in a separate append-only store that is never auto-pruned.
 
 Dom resolved the remaining conflicts on 2026-10-31. The pilot runs without the login on a trusted network, uses Kanban with several agents, and anyone can install. These four fixes are adopted. Workers must not be able to reach other profiles' credentials; this is a hard gate for R4, so if R2.0 cannot establish it the pilot waits. **The first pilot delivers only to a local file or Hermes chat**; Telegram and other platforms come after it. The parallel plan's evidence-import-first order, one-shot adapter, and login-first gate are not adopted.
+
+## 7b. R2.5 independent review — outcome (2026-11-01)
+
+An independent model audited the R2 slice read-only against these rules. One
+reviewer could not reach the repo (an empty SSHFS mount) and returned no verdict;
+the other audited the source over SSH and returned a detailed **FAIL for R4
+readiness** — expected, since R4 is explicitly gated and not claimed here. Its
+findings split into real defects (fixed now, with tests) and items that are
+correctly R3/R4 work (recorded as **hard gates**, not coded in R2).
+
+**Fixed in R2.5 (with tests):**
+- **Privacy (Rule 7).** The real messaging target no longer reaches Canvas. The
+  conductor sends an opaque `HMAC(local secret, target)` id and a platform-only
+  label; the id→target map stays in the conductor's 0600 config. (`refresh_targets`, `target_id`, `safe_label`.)
+- **Branch/join correctness (RUN-PLAN 12.1 / R-D6).** Joins now fire on a taken
+  branch while ignoring dead parents; an untaken branch and a rejected approval
+  mark their downstream dead; a decision that finishes without reporting a listed
+  branch **stops the run** (`blocked`); runs now reach a terminal status instead
+  of polling forever. New tests: diamond join, branch-not-reported, rejected
+  approval, untaken branch.
+- **Ledger trust (Rule 3).** The Kanban idempotency key is now unguessable
+  (`HMAC(secret, step key)`), and a created id already in the ledger is refused as
+  possible tampering — a pre-planted task can't satisfy a gate.
+- **Delivery-once (Rule 5).** `tick` holds an exclusive `flock`; the ledger is
+  saved right after each claim, each create and before/after each send, so
+  overlapping ticks or a crash cannot double-send or lose a claimed run. Per-run
+  `try/except` and a tick deadline keep one bad run from stopping the others.
+- **Argv safety (Rule 8).** The card title is passed after `--`, so a title
+  starting with `-` can never be read as a flag (bodies already use `--body-file`).
+- **Bundle hardening.** A bundle is structurally validated before it is claimed;
+  report payloads bound `cardId`/`branch` length and array size.
+- **Token scope.** A bearer token presented to any non-`/api/conductor/*` route is
+  refused `403` (test strengthened). The no-op constant-time compare was removed;
+  a successful pairing voids every other outstanding code.
+- **Durable evidence (§7a.4).** Deleting a workflow keeps its approvals, reports
+  and any claimed run as a tombstone; only never-claimed requests are cleared, and
+  a workflow with an unfinished run cannot be deleted until it is stopped.
+- Secret-bearing files are created `0600` from the first byte (no readable
+  window); Canvas redirects are refused so the token never follows to another host.
+
+**Recorded as hard gates — NOT coded in R2:**
+- **R3 is a hard prerequisite for R4.** Approve / connect / pair / cancel /
+  request-run currently need no human credential — on the trusted-network pilot
+  (R-D4) that is a UI convention, acceptable only because the tunnel exposes
+  **only `/api/conductor/*`** and the runner has no money tools. Before any real
+  run, R3 must land: a human-only approval credential with a browser-only session,
+  so an agent that can reach Canvas still cannot approve, connect, or start a run.
+- **R4 runner isolation (Rule 9).** The installer sets `terminal.backend: docker`
+  but does not yet restrict the toolset. R4 must write a strict allowlist
+  (terminal/file/web only; execute_code, delegate, browser, vault, computer_use,
+  cron, memory, skill, messaging and MCP disabled) and, at install time, **verify**
+  a worker cannot read `~/.hermes/.env`; `allow-profile` must review the profile's
+  tools. Until verified, the pilot runs tool-free steps only.
+- **Real delivery content (R4).** The conductor writes a minimal placeholder for
+  local-file delivery; fetching the produced task's real result/artifact needs
+  real runs and lands in R4.
+- **Preflight gate-bypass check (R3/R4).** Preflight should refuse a topology where
+  a card is reachable both through and around an approval. The conductor is safe
+  (a rejected-approval parent is treated as dead), but the design-time check is a
+  follow-up.
 
 ## 8. Decisions
 
