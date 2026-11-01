@@ -559,6 +559,103 @@ test("a failed save stays on this workflow instead of switching away", async ({ 
   expect((await stored(request, created.id)).title).toBe(created.title);
 });
 
+test("switching during a failing save does not resend the same failed write", async ({ page, request }) => {
+  const created = await createWorkflow(request, stamp("Once"));
+  const other = await createWorkflow(request, stamp("Away"));
+  await openWorkflow(page, created.id);
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let puts = 0;
+  await page.route(`**/api/workflows/${created.id}`, async (route) => {
+    if (route.request().method() === "PUT") {
+      puts += 1;
+      if (puts === 1) await gate;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "http_error", message: "disk full" } }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  try {
+    await page.getByLabel("Workflow title").fill("Fails once");
+    await page.waitForRequest((req) => req.method() === "PUT" && req.url().includes(created.id));
+    // Leaving asks the editor to settle while the first write is still open.
+    // No new edit was made, so that request must not cause a second PUT.
+    await (await row(page, other.title)).click();
+    release();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await page.waitForTimeout(1500);
+    expect(puts).toBe(1);
+    await expect(page).toHaveURL(new RegExp(`[?&]w=${created.id}`));
+  } finally {
+    release();
+  }
+});
+
+test("an edit during a failing save is sent once, not again by its autosave timer", async ({ page, request }) => {
+  const created = await createWorkflow(request, stamp("Twice"));
+  await openWorkflow(page, created.id);
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let puts = 0;
+  await page.route(`**/api/workflows/${created.id}`, async (route) => {
+    if (route.request().method() === "PUT") {
+      puts += 1;
+      if (puts === 1) await gate;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "http_error", message: "disk full" } }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  try {
+    await page.getByLabel("Workflow title").fill("First");
+    await page.waitForRequest((req) => req.method() === "PUT" && req.url().includes(created.id));
+    await page.getByLabel("Workflow title").fill("Second");
+    release();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    // Past the 600ms autosave window: the follow-up is sent once, not twice.
+    await page.waitForTimeout(1500);
+    expect(puts).toBe(2);
+  } finally {
+    release();
+  }
+});
+
+test("Back during a failing save keeps the address on the workflow still open", async ({ page, request }) => {
+  const first = await createWorkflow(request, stamp("Before"));
+  const second = await createWorkflow(request, stamp("Failing"));
+  await openWorkflow(page, first.id);
+  await (await row(page, second.title)).click();
+  await expect(page.getByLabel("Workflow title")).toHaveValue(second.title);
+  await page.route(`**/api/workflows/${second.id}`, async (route) => {
+    if (route.request().method() === "PUT") {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "http_error", message: "disk full" } }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByLabel("Workflow title").fill("Unsaved here");
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await page.goBack({ waitUntil: "commit" });
+  await expect(page.getByLabel("Workflow title")).toHaveValue("Unsaved here");
+  await expect(page).toHaveURL(new RegExp(`[?&]w=${second.id}`));
+});
+
 test("a rename while the workflow is loading still opens the canvas", async ({ page, request }) => {
   const created = await createWorkflow(request, stamp("Late"));
   await openWorkflow(page, created.id);

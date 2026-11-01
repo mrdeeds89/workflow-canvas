@@ -171,7 +171,6 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   const latest = useRef({ meta, nodes, edges });
   latest.current = { meta, nodes, edges };
   const saving = useRef(false);
-  const pending = useRef(false);
   const blocked = useRef(false);
   const dirty = useRef(false);
   // Set when this workflow is deleted, so a late save cannot write it back.
@@ -186,6 +185,15 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
   // A sidebar rename that arrives before the document has loaded.
   const pendingTitle = useRef<string | null>(null);
   const loadDone = useRef<Promise<void>>(Promise.resolve());
+  // Counts real edits, so a failed write can tell a newer edit from a caller
+  // that only asked to wait (switching away, Retry, autosave).
+  const edits = useRef(0);
+  // The edit count the last write carried. Autosave skips when nothing is newer,
+  // so an edit already sent by the loop is not sent again by its own timer.
+  const lastSent = useRef(0);
+  // The load reports the stored title without depending on the callback's identity.
+  const titleChanged = useRef(onTitleChange);
+  titleChanged.current = onTitleChange;
 
   useEffect(() => {
     let cancelled = false;
@@ -206,8 +214,9 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
         setMeta(next);
         setNodes(loadedNodesFlow);
         setEdges(loadedEdgesFlow);
-        onTitleChange(workflowId, next.title);
+        titleChanged.current(workflowId, next.title);
         if (title !== null) {
+          edits.current += 1;
           dirty.current = true;
           setSave({ kind: "dirty" });
           setChangeCount((count) => count + 1);
@@ -228,7 +237,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     return () => {
       cancelled = true;
     };
-  }, [workflowId, onTitleChange]);
+  }, [workflowId]);
 
   useEffect(() => {
     if (meta) document.title = `${meta.title.trim() || "Untitled workflow"} · Workflow Canvas`;
@@ -242,6 +251,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
 
   const markDirty = useCallback(() => {
     if (blocked.current) return;
+    edits.current += 1;
     dirty.current = true;
     setSave({ kind: "dirty" });
     setChangeCount((count) => count + 1);
@@ -255,20 +265,20 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
    */
   const flush = useCallback(async (): Promise<boolean> => {
     if (blocked.current || retired.current || holding.current) return false;
-    if (saving.current) {
-      pending.current = true;
-      return inflight.current ?? Promise.resolve(false);
-    }
+    // Join the write in flight. An edit made meanwhile already set dirty, so
+    // the loop below sends it; a caller that only waits must not add a write.
+    if (saving.current) return inflight.current ?? Promise.resolve(false);
 
     saving.current = true;
     const run = (async (): Promise<boolean> => {
       try {
         while (!blocked.current && !retired.current && !holding.current) {
-          if (!dirty.current && !pending.current) return true;
-          pending.current = false;
+          if (!dirty.current) return true;
           const { meta: currentMeta, nodes: currentNodes, edges: currentEdges } = latest.current;
           if (!currentMeta) return false;
           dirty.current = false;
+          const sentAt = edits.current;
+          lastSent.current = sentAt;
           const definition = buildDefinition(currentMeta, currentNodes, currentEdges);
           definition.revision = revision.current;
           setSave({ kind: "saving" });
@@ -296,7 +306,6 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
             if (!(error instanceof ApiError && error.status === 409)) dirty.current = true;
             if (error instanceof ApiError && error.status === 409) {
               blocked.current = true;
-              pending.current = false;
               dirty.current = false;
               setSave({ kind: "conflict" });
             } else if (error instanceof ApiError && error.status === 422) {
@@ -306,7 +315,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
             }
             // A newer edit arrived during this failed write. Send that once.
             // The same failed body must not be retried here.
-            if (pending.current && !blocked.current && !retired.current && !holding.current) {
+            if (edits.current !== sentAt && !blocked.current && !retired.current && !holding.current) {
               setSave({ kind: "dirty" });
               continue;
             }
@@ -314,11 +323,11 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
           }
           // The write already landed. Do not send the next one until delete settles.
           if (holding.current) {
-            if (dirty.current || pending.current) setSave({ kind: "dirty" });
+            if (dirty.current) setSave({ kind: "dirty" });
             else setSave({ kind: "saved" });
-            return !(dirty.current || pending.current);
+            return !dirty.current;
           }
-          if (dirty.current || pending.current) {
+          if (dirty.current) {
             setSave({ kind: "dirty" });
             continue;
           }
@@ -341,7 +350,10 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
 
   useEffect(() => {
     if (changeCount === 0) return;
-    const timer = setTimeout(() => void flush(), AUTOSAVE_MS);
+    const timer = setTimeout(() => {
+      // Retry and leaving still resend a failed body; the timer only sends news.
+      if (edits.current !== lastSent.current) void flush();
+    }, AUTOSAVE_MS);
     return () => clearTimeout(timer);
   }, [changeCount, flush]);
 
@@ -363,7 +375,7 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
     // Include an edit that lands while the previous write is still open.
     // False means the write failed: the shell must stay here so the error
     // remains visible and a late unmount write cannot race a reload.
-    while (!retired.current && !blocked.current && !holding.current && (dirty.current || saving.current || pending.current)) {
+    while (!retired.current && !blocked.current && !holding.current && (dirty.current || saving.current)) {
       if (!latest.current.meta) return false;
       const saved = await flush();
       if (!saved) return false;
@@ -406,13 +418,12 @@ function Editor({ workflowId, onTitleChange, ref }: EditorProps) {
       releaseWrites() {
         holding.current = false;
         if (retired.current || blocked.current || saving.current) return;
-        if (dirty.current || pending.current) void flush();
+        if (dirty.current) void flush();
       },
       discard() {
         retired.current = true;
         holding.current = false;
         dirty.current = false;
-        pending.current = false;
       },
     }),
     [flush, markDirty, settleAll],

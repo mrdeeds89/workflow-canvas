@@ -67,7 +67,12 @@ export function Shell() {
     const run = chain.current.then(async () => {
       if (id !== currentIdRef.current) {
         const saved = await editor.current?.settle();
-        if (saved === false) return;
+        if (saved === false) {
+          // Back/Forward already moved the address. Point it at the canvas still open.
+          const open = currentIdRef.current;
+          if (mode === "keep" && open) writeUrl(open, "replace");
+          return;
+        }
       }
       if (id === currentIdRef.current) {
         writeUrl(id, mode);
