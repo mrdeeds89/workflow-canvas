@@ -146,14 +146,59 @@ def send(args: list) -> int:
     return 0
 
 
+def log_cmd(argv: list) -> None:
+    path = os.environ.get("FAKE_HERMES_CMDLOG")
+    if path:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(argv) + "\n")
+
+
+def profile(args: list) -> int:
+    # create <name> ... | delete <name> | list
+    if args and args[0] == "create":
+        print(json.dumps({"ok": True, "profile": first_positional(args[1:])}))
+        return 0
+    if args and args[0] in ("delete", "list"):
+        print(json.dumps({"ok": True}))
+        return 0
+    return 0
+
+
+def boards(args: list) -> int:
+    # create <slug> --name N | rm <slug> --delete | list
+    if args and args[0] in ("create", "new"):
+        print(json.dumps({"ok": True, "slug": first_positional(args[1:])}))
+        return 0
+    print(json.dumps({"ok": True}))
+    return 0
+
+
+def cron(args: list) -> int:
+    if args and args[0] in ("create", "add"):
+        print(json.dumps({"ok": True, "id": "cron_fake_1"}))
+        return 0
+    if args and args[0] in ("remove", "rm", "delete", "list"):
+        print(json.dumps({"ok": True}))
+        return 0
+    return 0
+
+
 def main(argv: list) -> int:
     if not argv:
         return 2
+    log_cmd(argv)
     group, rest = argv[0], argv[1:]
     if group == "kanban":
+        # boards is a kanban subgroup: `kanban --board X boards ...` or `kanban boards ...`
+        if "boards" in rest:
+            return boards(rest[rest.index("boards") + 1:])
         return kanban(rest)
     if group == "send":
         return send(rest)
+    if group == "profile":
+        return profile(rest)
+    if group == "cron":
+        return cron(rest)
     print(f"fake_hermes: unknown group {group}", file=sys.stderr)
     return 2
 

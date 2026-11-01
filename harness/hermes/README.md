@@ -1,4 +1,11 @@
-# Hermes exporter
+# Hermes harness tools
+
+Two separate programs live here:
+
+- **Exporter** (`workflow_canvas_exporter.py`, below) — read-only observation of one Hermes cron job.
+- **Conductor** (`workflow_canvas_conductor.py`) — runs approved Workflow Canvas runs as Kanban tasks and delivers results. See `CONDUCTOR.md`.
+
+## Hermes exporter
 
 `workflow_canvas_exporter.py` lets a Workflow Canvas server see one Hermes cron job: its schedule, whether it is paused, its latest whole-job result, and its recent attempts. It is read-only. It cannot create, edit, pause, resume, run, or delete a job. The contract is in `docs/HERMES-INTEGRATION.md`.
 

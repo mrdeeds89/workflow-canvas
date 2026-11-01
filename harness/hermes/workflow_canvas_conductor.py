@@ -423,33 +423,215 @@ def report(cfg: dict, run_id: str, steps: list, outcomes: dict, deliveries: dict
     canvas(cfg, "POST", f"/api/conductor/report/{run_id}", payload)
 
 
+# --- installer ---------------------------------------------------------------
+
+RUNNER_PROFILE_CONFIG = """# Workflow Canvas runner profile — minimal and isolated.
+# Written by the Workflow Canvas conductor installer. Review before a real run
+# (R4): confirm the toolset and that workers cannot read other profiles' .env.
+terminal:
+  # Credential isolation (R2.0 finding 9): run workers in a container so a step
+  # cannot read ~/.hermes/.env or another profile's bot token.
+  backend: docker
+"""
+
+
+def hermes_cli(hermes_bin: str, args: list) -> tuple:
+    proc = subprocess.run([hermes_bin, *args], capture_output=True, text=True, timeout=120)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def pair_with_canvas(canvas_url: str, code: str) -> str | None:
+    body = json.dumps({"code": code}).encode("utf-8")
+    req = urllib.request.Request(canvas_url.rstrip("/") + "/api/conductor/pair", data=body, method="POST")
+    req.add_header("content-type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("token")
+    except urllib.error.HTTPError:
+        return None
+    except OSError:
+        return None
+
+
+def _write(path: str, text: str, mode: int | None = None) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    if mode is not None:
+        os.chmod(path, mode)
+
+
+def do_install(args) -> int:
+    hermes_home = args.hermes_home or os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    config_path = os.path.abspath(args.config)
+    config_dir = os.path.dirname(config_path)
+    scripts_dir = os.path.join(hermes_home, "scripts")
+    wrapper = os.path.join(scripts_dir, "workflow-canvas-conductor.sh")
+    profile_dir = os.path.join(hermes_home, "profiles", args.profile)
+    canvas_url = args.canvas.rstrip("/")
+    conductor_path = os.path.abspath(__file__)
+
+    plan = [
+        f"Pair with Canvas at {canvas_url}; store a conductor token in {config_path} (mode 600).",
+        f"Create a minimal runner profile '{args.profile}' (hermes profile create --no-skills).",
+        f"Write {os.path.join(profile_dir, 'config.yaml')} with terminal.backend=docker (credential isolation).",
+        f"Create the dedicated Kanban board '{args.board}' (hermes kanban boards create).",
+        f"Write the tick wrapper {wrapper}.",
+        "Add a cron job 'every 1m', --no-agent --deliver local, running the wrapper.",
+        f"Write the conductor config {config_path} (mode 600): board, allowlist=[{args.profile}], no skills.",
+    ]
+    print("The installer will make these changes:")
+    for i, line in enumerate(plan, 1):
+        print(f"  {i}. {line}")
+    if args.dry_run:
+        print("\n--dry-run: no changes made.")
+        return 0
+
+    def confirm(step: str) -> bool:
+        if args.yes:
+            return True
+        try:
+            return input(f"Proceed: {step}? [y/N] ").strip().lower() in ("y", "yes")
+        except EOFError:
+            return False
+
+    if not confirm("pair with Canvas"):
+        print("Aborted before any change.")
+        return 1
+    token = pair_with_canvas(canvas_url, args.pair)
+    if not token:
+        print("conductor: pairing failed (code bad, expired, or already used). No changes made.", file=sys.stderr)
+        return 1
+
+    if confirm(f"create runner profile '{args.profile}'"):
+        code, _, err = hermes_cli(args.hermes_bin, ["profile", "create", args.profile, "--no-skills", "--description", "Workflow Canvas runner: minimal, isolated; runs only approved steps."])
+        if code != 0:
+            print(f"conductor: profile create failed: {err.strip()}", file=sys.stderr)
+
+    if confirm("write the runner profile config"):
+        _write(os.path.join(profile_dir, "config.yaml"), RUNNER_PROFILE_CONFIG)
+
+    if confirm(f"create board '{args.board}'"):
+        hermes_cli(args.hermes_bin, ["kanban", "boards", "create", args.board, "--name", "Workflow Canvas"])
+
+    if confirm("write the tick wrapper"):
+        _write(wrapper, f"#!/usr/bin/env bash\n# Workflow Canvas conductor tick. Runs model-free, delivers nothing itself.\nexec python3 -I {conductor_path} --config {config_path} tick\n", 0o755)
+
+    cron_job_id = None
+    if confirm("add the every-1m cron job"):
+        code, out, err = hermes_cli(args.hermes_bin, ["cron", "create", "every 1m", "--name", "workflow-canvas-conductor", "--no-agent", "--deliver", "local", "--script", wrapper])
+        if code == 0:
+            try:
+                cron_job_id = json.loads(out).get("id")
+            except (json.JSONDecodeError, AttributeError):
+                cron_job_id = None
+        else:
+            print(f"conductor: cron create failed: {err.strip()}", file=sys.stderr)
+
+    cfg = {
+        "canvas_url": canvas_url, "token": token, "board": args.board,
+        "ledger_path": os.path.join(config_dir, "ledger.json"),
+        "allowed_profiles": [args.profile], "allowed_skills": [],
+        "hermes_bin": args.hermes_bin, "delivery_dir": os.path.join(config_dir, "deliveries"),
+        "targets": {}, "cron_job_id": cron_job_id,
+    }
+    if confirm("write the conductor config"):
+        _write(config_path, json.dumps(cfg, indent=2), 0o600)
+    print("Install complete. The conductor will start work on the next cron tick.")
+    return 0
+
+
+def do_uninstall(args) -> int:
+    config_path = os.path.abspath(args.config)
+    try:
+        cfg = load_config(config_path)
+    except (OSError, ConductorError, json.JSONDecodeError) as err:
+        print(f"conductor: cannot load config to uninstall: {err}", file=sys.stderr)
+        return 2
+    hermes_home = args.hermes_home or os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    wrapper = os.path.join(hermes_home, "scripts", "workflow-canvas-conductor.sh")
+    if cfg.get("cron_job_id"):
+        hermes_cli(cfg["hermes_bin"], ["cron", "remove", cfg["cron_job_id"]])
+    # Best-effort: tell Canvas to forget this connection's token.
+    try:
+        req = urllib.request.Request(cfg["canvas_url"] + "/api/connection", method="DELETE")
+        urllib.request.urlopen(req, timeout=15).close()
+    except OSError:
+        pass
+    for path in (wrapper, config_path):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    print("Uninstalled: removed the cron job, the tick wrapper, and the config (token). The board and its history are kept.")
+    return 0
+
+
+def do_allow(args, kind: str) -> int:
+    config_path = os.path.abspath(args.config)
+    cfg = load_config(config_path)
+    key = "allowed_profiles" if kind == "profile" else "allowed_skills"
+    if args.name not in cfg[key]:
+        cfg[key].append(args.name)
+        _write(config_path, json.dumps(cfg, indent=2), 0o600)
+        print(f"Allowed {kind}: {args.name}")
+    else:
+        print(f"{kind} already allowed: {args.name}")
+    return 0
+
+
 # --- CLI ---------------------------------------------------------------------
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list) -> int:
     parser = argparse.ArgumentParser(description="Workflow Canvas conductor (Hermes side).")
     parser.add_argument("--config", default=os.environ.get(CONFIG_ENV, DEFAULT_CONFIG))
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("tick", help="Run one pass: claim, create due steps, deliver, report.")
     sub.add_parser("status", help="Print the ledger summary.")
+
+    inst = sub.add_parser("install", help="Create the runner profile, board, config and cron job.")
+    inst.add_argument("--canvas", required=True, help="Canvas base URL, e.g. http://127.0.0.1:8787")
+    inst.add_argument("--pair", required=True, help="The one-time pairing code shown in Canvas.")
+    inst.add_argument("--board", default="workflow-canvas")
+    inst.add_argument("--profile", default="canvas-runner")
+    inst.add_argument("--hermes-home", default=None)
+    inst.add_argument("--hermes-bin", default="hermes")
+    inst.add_argument("--tunnel", default=None, help="Optional SSH tunnel user@host (recorded for the operator; not opened here).")
+    inst.add_argument("--dry-run", action="store_true")
+    inst.add_argument("--yes", action="store_true", help="Skip per-step confirmation.")
+
+    un = sub.add_parser("uninstall", help="Remove the cron job, wrapper and config; keep the board.")
+    un.add_argument("--hermes-home", default=None)
+
+    ap = sub.add_parser("allow-profile", help="Add a profile to the allowlist.")
+    ap.add_argument("name")
+    ask = sub.add_parser("allow-skill", help="Add a skill to the allowlist.")
+    ask.add_argument("name")
+
     args = parser.parse_args(argv)
 
     try:
-        cfg = load_config(args.config)
-    except (OSError, ConductorError, json.JSONDecodeError) as err:
-        print(f"conductor: cannot load config: {err}", file=sys.stderr)
-        return 2
+        if args.command == "install":
+            return do_install(args)
+        if args.command == "uninstall":
+            return do_uninstall(args)
+        if args.command == "allow-profile":
+            return do_allow(args, "profile")
+        if args.command == "allow-skill":
+            return do_allow(args, "skill")
 
-    try:
+        cfg = load_config(args.config)
         if args.command == "tick":
             print(json.dumps(tick(cfg)))
             return 0
         if args.command == "status":
             ledger = load_ledger(cfg)
             runs = {rid: {"done": s["done"], "tasks": len(s["tasks"]), "deliveries": s["deliveries"]} for rid, s in ledger["runs"].items()}
-            print(json.dumps({"runs": runs}))
+            redacted = {k: ("<set>" if k == "token" else v) for k, v in cfg.items()}
+            print(json.dumps({"config": redacted, "runs": runs}))
             return 0
-    except ConductorError as err:
+    except (OSError, ConductorError, json.JSONDecodeError) as err:
         print(f"conductor: {err}", file=sys.stderr)
         return 1
     return 2
